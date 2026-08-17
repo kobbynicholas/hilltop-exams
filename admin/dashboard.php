@@ -96,41 +96,31 @@ $recentStudents = $conn->query("
 
 <nav class="hibs-nav">
 
-    <a href="dashboard.php" class="active">
-        Dashboard
-    </a>
+    <nav class="hibs-nav">
 
-    <a href="students.php">
-        Students
-    </a>
+    <a href="dashboard.php">Dashboard</a>
 
-    <a href="classes.php">
-        Classes
-    </a>
+    <a href="students.php">Students</a>
 
-    <a href="subjects.php">
-        Subjects
-    </a>
+    <a href="classes.php">Classes</a>
 
-    <a href="teachers.php">
-        Teachers
-    </a>
+    <a href="subjects.php">Subjects</a>
 
-    <a href="marks.php">
-        Marks
-    </a>
+    <a href="teachers.php">Teachers</a>
 
-    <a href="attendance.php">
-        Attendance
-    </a>
+    <a href="academic_years.php">Academic Years</a>
 
-    <a href="reports.php">
-        Reports
-    </a>
+    <a href="terms.php">Terms</a>
 
-    <a href="settings.php">
-        Settings
-    </a>
+    <a href="marks.php">Marks</a>
+
+    <a href="attendance.php">Attendance</a>
+
+    <a href="reports.php">Reports</a>
+
+    <a href="settings.php">Settings</a>
+
+</nav>
 
 </nav>
 
