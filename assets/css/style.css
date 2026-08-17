@@ -1,0 +1,281 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #f4f6f9;
+    color: #222;
+}
+
+/* LOGIN */
+
+.login-body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #071d49, #123b78);
+}
+
+.login-container {
+    width: 400px;
+    max-width: 92%;
+    background: white;
+    padding: 40px;
+    border-radius: 15px;
+    box-shadow: 0 15px 40px rgba(0,0,0,.25);
+}
+
+.login-logo {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.school-icon {
+    width: 65px;
+    height: 65px;
+    margin: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #071d49;
+    color: white;
+    font-size: 32px;
+    font-weight: bold;
+}
+
+.login-logo h1 {
+    margin-top: 15px;
+    color: #071d49;
+    font-size: 25px;
+}
+
+.login-logo p {
+    color: #777;
+    margin-top: 5px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 7px;
+    font-weight: bold;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 13px;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+    outline: none;
+    font-size: 15px;
+}
+
+.form-group input:focus {
+    border-color: #071d49;
+}
+
+.login-btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 7px;
+    background: #071d49;
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.login-btn:hover {
+    background: #123b78;
+}
+
+.alert {
+    background: #ffe5e5;
+    color: #b00020;
+    padding: 12px;
+    border-radius: 7px;
+    margin-bottom: 20px;
+}
+
+.login-footer {
+    text-align: center;
+    margin-top: 25px;
+    font-size: 12px;
+    color: #888;
+}
+
+/* SIDEBAR */
+
+.sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 250px;
+    height: 100vh;
+    background: #071d49;
+    color: white;
+    padding: 25px 15px;
+}
+
+.sidebar-logo {
+    text-align: center;
+    margin-bottom: 35px;
+}
+
+.sidebar-logo .school-icon {
+    width: 50px;
+    height: 50px;
+    font-size: 24px;
+    background: white;
+    color: #071d49;
+}
+
+.sidebar-logo h2 {
+    margin-top: 12px;
+    font-size: 18px;
+}
+
+.sidebar-logo small {
+    color: #b8c5dd;
+}
+
+.sidebar nav a {
+    display: block;
+    padding: 13px 15px;
+    margin-bottom: 5px;
+    color: white;
+    text-decoration: none;
+    border-radius: 7px;
+}
+
+.sidebar nav a:hover,
+.sidebar nav a.active {
+    background: #123b78;
+}
+
+/* MAIN */
+
+.main-content {
+    margin-left: 250px;
+    padding: 30px;
+}
+
+.topbar {
+    background: white;
+    padding: 20px 25px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 25px;
+}
+
+.topbar h1 {
+    color: #071d49;
+}
+
+.topbar p {
+    color: #777;
+    margin-top: 5px;
+}
+
+.admin-badge {
+    background: #071d49;
+    color: white;
+    padding: 8px 15px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+/* DASHBOARD CARDS */
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+}
+
+.dashboard-card {
+    background: white;
+    padding: 25px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    box-shadow: 0 3px 12px rgba(0,0,0,.06);
+}
+
+.card-icon {
+    font-size: 35px;
+}
+
+.dashboard-card h3 {
+    font-size: 28px;
+    color: #071d49;
+}
+
+.dashboard-card p {
+    color: #777;
+    margin-top: 4px;
+}
+
+.welcome-box {
+    background: white;
+    margin-top: 25px;
+    padding: 30px;
+    border-radius: 12px;
+}
+
+.welcome-box h2 {
+    color: #071d49;
+    margin-bottom: 10px;
+}
+
+.welcome-box p {
+    color: #666;
+    line-height: 1.7;
+}
+
+/* RESPONSIVE */
+
+@media (max-width: 900px) {
+
+    .cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+}
+
+@media (max-width: 700px) {
+
+    .sidebar {
+        position: relative;
+        width: 100%;
+        height: auto;
+    }
+
+    .main-content {
+        margin-left: 0;
+    }
+
+    .cards {
+        grid-template-columns: 1fr;
+    }
+
+    .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+
+}
