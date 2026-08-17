@@ -4,21 +4,10 @@ session_start();
 
 require_once "../config/db.php";
 
-if (!isset($_SESSION["user_id"])) {
-
+if (!isset($_SESSION["user_id"]) || $_SESSION["role"] !== "admin") {
     header("Location: ../login.php");
     exit;
-
 }
-
-if ($_SESSION["role"] !== "admin") {
-
-    header("Location: ../login.php");
-    exit;
-
-}
-
-/* COUNTS */
 
 $students = $conn
     ->query("SELECT COUNT(*) FROM students")
@@ -36,6 +25,16 @@ $subjects = $conn
     ->query("SELECT COUNT(*) FROM subjects")
     ->fetchColumn();
 
+$recentStudents = $conn->query("
+    SELECT
+        s.*,
+        c.class_name
+    FROM students s
+    LEFT JOIN classes c ON c.id = s.class_id
+    ORDER BY s.id DESC
+    LIMIT 5
+")->fetchAll();
+
 ?>
 
 <!DOCTYPE html>
@@ -48,7 +47,7 @@ $subjects = $conn
     <meta name="viewport"
           content="width=device-width, initial-scale=1.0">
 
-    <title>HIBS Reports - Dashboard</title>
+    <title>HIBS Reports | Dashboard</title>
 
     <link rel="stylesheet"
           href="../assets/css/style.css">
@@ -57,146 +56,216 @@ $subjects = $conn
 
 <body>
 
-<div class="sidebar">
+<header class="hibs-header">
 
-    <div class="sidebar-logo">
+    <div class="brand">
 
-        <div class="school-icon">H</div>
+        <div class="brand-mark">H</div>
 
-        <h2>HIBS REPORTS</h2>
+        <div class="brand-text">
 
-        <small>Administrator</small>
+            <h1>HIBS REPORTS</h1>
+
+            <span>
+                HILLTOP INTERNATIONAL BRITISH SCHOOL
+            </span>
+
+        </div>
 
     </div>
 
-    <nav>
+    <div class="top-user">
 
-        <a href="dashboard.php" class="active">
-            🏠 Dashboard
-        </a>
+        <div class="user-name">
 
-        <a href="students.php">
-            👨‍🎓 Students
-        </a>
-
-        <a href="teachers.php">
-            👩‍🏫 Teachers
-        </a>
-
-        <a href="classes.php">
-            🏫 Classes
-        </a>
-
-        <a href="subjects.php">
-            📚 Subjects
-        </a>
-
-        <a href="marks.php">
-            📝 Marks Entry
-        </a>
-
-        <a href="attendance.php">
-            📅 Attendance
-        </a>
-
-        <a href="reports.php">
-            📊 Reports
-        </a>
-
-        <a href="settings.php">
-            ⚙️ Settings
-        </a>
-
-        <a href="../logout.php">
-            🚪 Logout
-        </a>
-
-    </nav>
-
-</div>
-
-<div class="main-content">
-
-    <header class="topbar">
-
-        <div>
-
-            <h1>Dashboard</h1>
-
-            <p>
-                Welcome,
+            <strong>
                 <?= htmlspecialchars($_SESSION["full_name"]) ?>
-            </p>
+            </strong>
+
+            <small>Administrator</small>
 
         </div>
 
-        <div class="admin-badge">
-            ADMIN
-        </div>
+        <a href="../logout.php" class="logout-link">
+            Sign out
+        </a>
 
-    </header>
+    </div>
 
-    <section class="cards">
+</header>
 
-        <div class="dashboard-card">
+<nav class="hibs-nav">
 
-            <div class="card-icon">👨‍🎓</div>
+    <a href="dashboard.php" class="active">
+        Dashboard
+    </a>
 
-            <div>
-                <h3><?= $students ?></h3>
-                <p>Students</p>
-            </div>
+    <a href="students.php">
+        Students
+    </a>
 
-        </div>
+    <a href="classes.php">
+        Classes
+    </a>
 
-        <div class="dashboard-card">
+    <a href="subjects.php">
+        Subjects
+    </a>
 
-            <div class="card-icon">👩‍🏫</div>
+    <a href="teachers.php">
+        Teachers
+    </a>
 
-            <div>
-                <h3><?= $teachers ?></h3>
-                <p>Teachers</p>
-            </div>
+    <a href="marks.php">
+        Marks
+    </a>
 
-        </div>
+    <a href="attendance.php">
+        Attendance
+    </a>
 
-        <div class="dashboard-card">
+    <a href="reports.php">
+        Reports
+    </a>
 
-            <div class="card-icon">🏫</div>
+    <a href="settings.php">
+        Settings
+    </a>
 
-            <div>
-                <h3><?= $classes ?></h3>
-                <p>Classes</p>
-            </div>
+</nav>
 
-        </div>
+<main class="page">
 
-        <div class="dashboard-card">
+    <div class="overview-title">
 
-            <div class="card-icon">📚</div>
-
-            <div>
-                <h3><?= $subjects ?></h3>
-                <p>Subjects</p>
-            </div>
-
-        </div>
-
-    </section>
-
-    <section class="welcome-box">
-
-        <h2>HIBS Academic Reports System</h2>
+        <h2>Academic Overview</h2>
 
         <p>
-            Manage students, teachers, classes, subjects,
-            academic marks, attendance and student reports
-            from one central system.
+            Administration and academic records
         </p>
 
-    </section>
+    </div>
 
-</div>
+    <div class="stat-grid">
+
+        <div class="stat-card">
+
+            <small>Students</small>
+
+            <h3><?= $students ?></h3>
+
+        </div>
+
+        <div class="stat-card">
+
+            <small>Teachers</small>
+
+            <h3><?= $teachers ?></h3>
+
+        </div>
+
+        <div class="stat-card">
+
+            <small>Classes</small>
+
+            <h3><?= $classes ?></h3>
+
+        </div>
+
+        <div class="stat-card">
+
+            <small>Subjects</small>
+
+            <h3><?= $subjects ?></h3>
+
+        </div>
+
+    </div>
+
+    <div class="content-panel">
+
+        <h3>Recently Registered Students</h3>
+
+        <div class="table-wrapper">
+
+            <table class="hibs-table">
+
+                <thead>
+
+                <tr>
+
+                    <th>Student</th>
+                    <th>Student ID</th>
+                    <th>Class</th>
+                    <th>Gender</th>
+                    <th>Status</th>
+
+                </tr>
+
+                </thead>
+
+                <tbody>
+
+                <?php if (!$recentStudents): ?>
+
+                    <tr>
+
+                        <td colspan="5">
+                            No students have been registered yet.
+                        </td>
+
+                    </tr>
+
+                <?php endif; ?>
+
+                <?php foreach ($recentStudents as $student): ?>
+
+                    <tr>
+
+                        <td>
+                            <?= htmlspecialchars(
+                                $student["first_name"] . " " .
+                                $student["last_name"]
+                            ) ?>
+                        </td>
+
+                        <td>
+                            <?= htmlspecialchars(
+                                $student["student_id"]
+                            ) ?>
+                        </td>
+
+                        <td>
+                            <?= htmlspecialchars(
+                                $student["class_name"] ?? "Not assigned"
+                            ) ?>
+                        </td>
+
+                        <td>
+                            <?= htmlspecialchars(
+                                $student["gender"]
+                            ) ?>
+                        </td>
+
+                        <td>
+                            <?= htmlspecialchars(
+                                $student["status"]
+                            ) ?>
+                        </td>
+
+                    </tr>
+
+                <?php endforeach; ?>
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </div>
+
+</main>
 
 </body>
 </html>
