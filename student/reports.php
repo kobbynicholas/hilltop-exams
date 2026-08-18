@@ -1963,12 +1963,10 @@ body {
 
 
 <a
-    href="../student_report.php?id=<?= (int)$report["id"] ?>"
-    class="action view"
+    href="print_report.php?report_id=<?= (int)$report["id"] ?>"
     target="_blank"
-    rel="noopener"
 >
-    View Full Report
+    View / Print
 </a>
 
 
