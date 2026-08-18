@@ -6,6 +6,9 @@ session_start();
 
 require_once "../config/db.php";
 
+ini_set("display_errors", "1");
+error_reporting(E_ALL);
+
 
 /*
 |--------------------------------------------------------------------------
@@ -13,10 +16,6 @@ require_once "../config/db.php";
 | ACCOUNT MANAGEMENT
 |--------------------------------------------------------------------------
 */
-
-
-ini_set("display_errors", "1");
-error_reporting(E_ALL);
 
 
 /*
@@ -50,65 +49,86 @@ function h($value): string
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| DATABASE HELPERS
-|--------------------------------------------------------------------------
-*/
-
 function tableExists(
     PDO $conn,
     string $table
 ): bool {
 
-    $stmt = $conn->prepare("
-        SELECT COUNT(*)
+    try {
 
-        FROM information_schema.tables
+        $stmt = $conn->prepare("
+            SELECT COUNT(*)
 
-        WHERE table_schema = DATABASE()
+            FROM information_schema.tables
 
-        AND table_name = ?
-    ");
+            WHERE table_schema = DATABASE()
 
-    $stmt->execute([
-        $table
-    ]);
+            AND table_name = ?
+        ");
 
-    return (int)$stmt->fetchColumn() > 0;
+        $stmt->execute([
+            $table
+        ]);
+
+        return (int)$stmt->fetchColumn() > 0;
+
+    } catch (Throwable $e) {
+
+        return false;
+    }
 }
 
 
-function columnExists(
+function getColumns(
     PDO $conn,
-    string $table,
+    string $table
+): array {
+
+    try {
+
+        $stmt = $conn->prepare("
+            SELECT column_name
+
+            FROM information_schema.columns
+
+            WHERE table_schema = DATABASE()
+
+            AND table_name = ?
+
+            ORDER BY ordinal_position
+        ");
+
+        $stmt->execute([
+            $table
+        ]);
+
+        return $stmt->fetchAll(
+            PDO::FETCH_COLUMN
+        );
+
+    } catch (Throwable $e) {
+
+        return [];
+    }
+}
+
+
+function hasColumn(
+    array $columns,
     string $column
 ): bool {
 
-    $stmt = $conn->prepare("
-        SELECT COUNT(*)
-
-        FROM information_schema.columns
-
-        WHERE table_schema = DATABASE()
-
-        AND table_name = ?
-
-        AND column_name = ?
-    ");
-
-    $stmt->execute([
-        $table,
-        $column
-    ]);
-
-    return (int)$stmt->fetchColumn() > 0;
+    return in_array(
+        $column,
+        $columns,
+        true
+    );
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| VERIFY USERS TABLE
+| REQUIRED TABLES
 |--------------------------------------------------------------------------
 */
 
@@ -134,21 +154,15 @@ if (
         </p>
 
         <p>
-            Please run
+            Run
             <strong>setup_accounts.php</strong>
-            once before using Account Management.
+            first.
         </p>
 
         </div>
     ");
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| CHECK STUDENTS / TEACHERS
-|--------------------------------------------------------------------------
-*/
 
 if (
     !tableExists(
@@ -173,7 +187,7 @@ if (
         <h2>HIBS Reports Database Error</h2>
 
         <p>
-            The students or teachers table could not be found.
+            The students or teachers table does not exist.
         </p>
 
         </div>
@@ -183,15 +197,162 @@ if (
 
 /*
 |--------------------------------------------------------------------------
-| SUCCESS / ERROR
+| GET ACTUAL COLUMNS
+|--------------------------------------------------------------------------
+*/
+
+$userColumns =
+    getColumns(
+        $conn,
+        "users"
+    );
+
+$studentColumns =
+    getColumns(
+        $conn,
+        "students"
+    );
+
+$teacherColumns =
+    getColumns(
+        $conn,
+        "teachers"
+    );
+
+$classColumns =
+    getColumns(
+        $conn,
+        "classes"
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| MESSAGES
 |--------------------------------------------------------------------------
 */
 
 $success = "";
 $error = "";
 
-$generatedUsername = "";
-$generatedPassword = "";
+$createdUsername = "";
+$createdPassword = "";
+$createdPerson = "";
+
+
+/*
+|--------------------------------------------------------------------------
+| PERSON NAME HELPER
+|--------------------------------------------------------------------------
+*/
+
+function getPersonName(
+    array $person,
+    array $columns
+): string {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Full name fields
+    |--------------------------------------------------------------------------
+    */
+
+    foreach (
+        [
+            "full_name",
+            "name",
+            "student_name",
+            "teacher_name"
+        ] as $field
+    ) {
+
+        if (
+            hasColumn(
+                $columns,
+                $field
+            )
+            &&
+            trim(
+                (string)
+                (
+                    $person[$field]
+                    ?? ""
+                )
+            ) !== ""
+        ) {
+
+            return trim(
+                (string)
+                $person[$field]
+            );
+        }
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | First / middle / last
+    |--------------------------------------------------------------------------
+    */
+
+    $parts = [];
+
+
+    foreach (
+        [
+            "first_name",
+            "middle_name",
+            "last_name"
+        ] as $field
+    ) {
+
+        if (
+            hasColumn(
+                $columns,
+                $field
+            )
+            &&
+            trim(
+                (string)
+                (
+                    $person[$field]
+                    ?? ""
+                )
+            ) !== ""
+        ) {
+
+            $parts[] =
+                trim(
+                    (string)
+                    $person[$field]
+                );
+        }
+    }
+
+
+    if (
+        count($parts) > 0
+    ) {
+
+        return implode(
+            " ",
+            $parts
+        );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fallback
+    |--------------------------------------------------------------------------
+    */
+
+    return "Person #" .
+        (
+            $person["id"]
+            ?? ""
+        );
+}
 
 
 /*
@@ -212,7 +373,7 @@ if (
 
         /*
         |--------------------------------------------------------------------------
-        | CREATE STUDENT / TEACHER ACCOUNT
+        | CREATE
         |--------------------------------------------------------------------------
         */
 
@@ -226,7 +387,9 @@ if (
                     trim(
                         (string)
                         (
-                            $_POST["person_type"]
+                            $_POST[
+                                "person_type"
+                            ]
                             ?? ""
                         )
                     )
@@ -245,7 +408,9 @@ if (
                 trim(
                     (string)
                     (
-                        $_POST["username"]
+                        $_POST[
+                            "username"
+                        ]
                         ?? ""
                     )
                 );
@@ -254,10 +419,18 @@ if (
             $password =
                 (string)
                 (
-                    $_POST["password"]
+                    $_POST[
+                        "password"
+                    ]
                     ?? ""
                 );
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | VALIDATION
+            |--------------------------------------------------------------------------
+            */
 
             if (
                 !in_array(
@@ -271,7 +444,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Invalid account type."
+                    "Please select Student or Teacher."
                 );
             }
 
@@ -281,7 +454,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Please select a student or teacher."
+                    "Please select a person."
                 );
             }
 
@@ -331,171 +504,82 @@ if (
 
             /*
             |--------------------------------------------------------------------------
-            | GET PERSON
+            | SELECT PERSON
+            |--------------------------------------------------------------------------
+            */
+
+            $table =
+                $personType === "student"
+                ? "students"
+                : "teachers";
+
+
+            $columns =
+                $personType === "student"
+                ? $studentColumns
+                : $teacherColumns;
+
+
+            $stmt =
+                $conn->prepare("
+                    SELECT *
+
+                    FROM `$table`
+
+                    WHERE id = ?
+
+                    LIMIT 1
+                ");
+
+            $stmt->execute([
+                $personId
+            ]);
+
+
+            $person =
+                $stmt->fetch(
+                    PDO::FETCH_ASSOC
+                );
+
+
+            if (
+                !$person
+            ) {
+
+                throw new Exception(
+                    ucfirst(
+                        $personType
+                    )
+                    .
+                    " not found."
+                );
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | CHECK EXISTING USER_ID
             |--------------------------------------------------------------------------
             */
 
             if (
-                $personType === "student"
+                hasColumn(
+                    $columns,
+                    "user_id"
+                )
+                &&
+                !empty(
+                    $person["user_id"]
+                )
             ) {
 
-                $stmt =
-                    $conn->prepare("
-                        SELECT *
-
-                        FROM students
-
-                        WHERE id = ?
-
-                        LIMIT 1
-                    ");
-
-                $stmt->execute([
-                    $personId
-                ]);
-
-                $person =
-                    $stmt->fetch(
-                        PDO::FETCH_ASSOC
-                    );
-
-
-                if (
-                    !$person
-                ) {
-
-                    throw new Exception(
-                        "Student not found."
-                    );
-                }
-
-
-                $firstName =
-                    trim(
-                        (string)
-                        (
-                            $person[
-                                "first_name"
-                            ]
-                            ?? ""
-                        )
-                    );
-
-
-                $lastName =
-                    trim(
-                        (string)
-                        (
-                            $person[
-                                "last_name"
-                            ]
-                            ?? ""
-                        )
-                    );
-
-
-                /*
-                |--------------------------------------------------------------------------
-                | CHECK EXISTING STUDENT ACCOUNT
-                |--------------------------------------------------------------------------
-                */
-
-                if (
-                    columnExists(
-                        $conn,
-                        "students",
-                        "user_id"
-                    )
-                    &&
-                    !empty(
-                        $person["user_id"]
-                    )
-                ) {
-
-                    throw new Exception(
-                        "This student already has a login account."
-                    );
-                }
-
-            } else {
-
-                $stmt =
-                    $conn->prepare("
-                        SELECT *
-
-                        FROM teachers
-
-                        WHERE id = ?
-
-                        LIMIT 1
-                    ");
-
-                $stmt->execute([
-                    $personId
-                ]);
-
-                $person =
-                    $stmt->fetch(
-                        PDO::FETCH_ASSOC
-                    );
-
-
-                if (
-                    !$person
-                ) {
-
-                    throw new Exception(
-                        "Teacher not found."
-                    );
-                }
-
-
-                $firstName =
-                    trim(
-                        (string)
-                        (
-                            $person[
-                                "first_name"
-                            ]
-                            ?? ""
-                        )
-                    );
-
-
-                $lastName =
-                    trim(
-                        (string)
-                        (
-                            $person[
-                                "last_name"
-                            ]
-                            ?? ""
-                        )
-                    );
-
-
-                /*
-                |--------------------------------------------------------------------------
-                | CHECK EXISTING TEACHER ACCOUNT
-                |--------------------------------------------------------------------------
-                */
-
-                if (
-                    columnExists(
-                        $conn,
-                        "teachers",
-                        "user_id"
-                    )
-                    &&
-                    !empty(
-                        $person["user_id"]
-                    )
-                ) {
-
-                    throw new Exception(
-                        "This teacher already has a login account."
-                    );
-                }
+                throw new Exception(
+                    "This "
+                    .
+                    $personType
+                    .
+                    " already has a login account."
+                );
             }
 
 
@@ -533,14 +617,14 @@ if (
 
             /*
             |--------------------------------------------------------------------------
-            | HASH PASSWORD
+            | GET PERSON NAME
             |--------------------------------------------------------------------------
             */
 
-            $passwordHash =
-                password_hash(
-                    $password,
-                    PASSWORD_DEFAULT
+            $personName =
+                getPersonName(
+                    $person,
+                    $columns
                 );
 
 
@@ -548,45 +632,244 @@ if (
             |--------------------------------------------------------------------------
             | INSERT USER
             |--------------------------------------------------------------------------
+            |
+            | IMPORTANT:
+            | We only insert columns that actually exist.
+            |
             */
 
-            $stmt =
-                $conn->prepare("
-                    INSERT INTO users
-                    (
-                        username,
-                        password,
-                        role,
-                        status,
-                        first_name,
-                        last_name
-                    )
-
-                    VALUES
-                    (
-                        ?,
-                        ?,
-                        ?,
-                        'active',
-                        ?,
-                        ?
-                    )
-                ");
+            $insertColumns = [
+                "username",
+                "password",
+                "role"
+            ];
 
 
-            $stmt->execute([
-
+            $insertValues = [
                 $username,
+                password_hash(
+                    $password,
+                    PASSWORD_DEFAULT
+                ),
+                $personType
+            ];
 
-                $passwordHash,
 
-                $personType,
+            /*
+            |--------------------------------------------------------------------------
+            | STATUS
+            |--------------------------------------------------------------------------
+            */
 
-                $firstName,
+            if (
+                hasColumn(
+                    $userColumns,
+                    "status"
+                )
+            ) {
 
-                $lastName
+                $insertColumns[] =
+                    "status";
 
-            ]);
+                $insertValues[] =
+                    "active";
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | FIRST NAME
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                hasColumn(
+                    $userColumns,
+                    "first_name"
+                )
+            ) {
+
+                $firstName =
+                    "";
+
+
+                if (
+                    hasColumn(
+                        $columns,
+                        "first_name"
+                    )
+                ) {
+
+                    $firstName =
+                        trim(
+                            (string)
+                            (
+                                $person[
+                                    "first_name"
+                                ]
+                                ?? ""
+                            )
+                        );
+                }
+
+
+                $insertColumns[] =
+                    "first_name";
+
+                $insertValues[] =
+                    $firstName;
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | LAST NAME
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                hasColumn(
+                    $userColumns,
+                    "last_name"
+                )
+            ) {
+
+                $lastName =
+                    "";
+
+
+                if (
+                    hasColumn(
+                        $columns,
+                        "last_name"
+                    )
+                ) {
+
+                    $lastName =
+                        trim(
+                            (string)
+                            (
+                                $person[
+                                    "last_name"
+                                ]
+                                ?? ""
+                            )
+                        );
+                }
+
+
+                $insertColumns[] =
+                    "last_name";
+
+                $insertValues[] =
+                    $lastName;
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | EMAIL
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                hasColumn(
+                    $userColumns,
+                    "email"
+                )
+                &&
+                hasColumn(
+                    $columns,
+                    "email"
+                )
+            ) {
+
+                $email =
+                    trim(
+                        (string)
+                        (
+                            $person[
+                                "email"
+                            ]
+                            ?? ""
+                        )
+                    );
+
+
+                if (
+                    $email !== ""
+                ) {
+
+                    $insertColumns[] =
+                        "email";
+
+                    $insertValues[] =
+                        $email;
+                }
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | BUILD INSERT
+            |--------------------------------------------------------------------------
+            */
+
+            $placeholders =
+                implode(
+                    ", ",
+                    array_fill(
+                        0,
+                        count(
+                            $insertColumns
+                        ),
+                        "?"
+                    )
+                );
+
+
+            $columnList =
+                implode(
+                    ", ",
+                    array_map(
+                        function (
+                            $column
+                        ) {
+
+                            return "`"
+                                .
+                                $column
+                                .
+                                "`";
+
+                        },
+                        $insertColumns
+                    )
+                );
+
+
+            $sql = "
+                INSERT INTO users
+                (
+                    $columnList
+                )
+
+                VALUES
+                (
+                    $placeholders
+                )
+            ";
+
+
+            $stmt =
+                $conn->prepare(
+                    $sql
+                );
+
+
+            $stmt->execute(
+                $insertValues
+            );
 
 
             $userId =
@@ -596,17 +879,20 @@ if (
 
             /*
             |--------------------------------------------------------------------------
-            | LINK ACCOUNT TO PERSON
+            | LINK PERSON TO USER
             |--------------------------------------------------------------------------
             */
 
             if (
-                $personType === "student"
+                hasColumn(
+                    $columns,
+                    "user_id"
+                )
             ) {
 
                 $stmt =
                     $conn->prepare("
-                        UPDATE students
+                        UPDATE `$table`
 
                         SET user_id = ?
 
@@ -620,19 +906,13 @@ if (
 
             } else {
 
-                $stmt =
-                    $conn->prepare("
-                        UPDATE teachers
-
-                        SET user_id = ?
-
-                        WHERE id = ?
-                    ");
-
-                $stmt->execute([
-                    $userId,
-                    $personId
-                ]);
+                throw new Exception(
+                    "The "
+                    .
+                    $table
+                    .
+                    " table does not contain a user_id column."
+                );
             }
 
 
@@ -642,11 +922,14 @@ if (
             |--------------------------------------------------------------------------
             */
 
-            $generatedUsername =
+            $createdUsername =
                 $username;
 
-            $generatedPassword =
+            $createdPassword =
                 $password;
+
+            $createdPerson =
+                $personName;
 
 
             $success =
@@ -655,13 +938,12 @@ if (
                 )
                 .
                 " login account created successfully.";
-
         }
 
 
         /*
         |--------------------------------------------------------------------------
-        | ACTIVATE / DEACTIVATE
+        | CHANGE STATUS
         |--------------------------------------------------------------------------
         */
 
@@ -714,7 +996,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Invalid account status."
+                    "Invalid status."
                 );
             }
 
@@ -759,7 +1041,20 @@ if (
             ) {
 
                 throw new Exception(
-                    "Administrator accounts cannot be changed from this page."
+                    "Administrator accounts cannot be changed here."
+                );
+            }
+
+
+            if (
+                !hasColumn(
+                    $userColumns,
+                    "status"
+                )
+            ) {
+
+                throw new Exception(
+                    "The users table does not contain a status column."
                 );
             }
 
@@ -830,7 +1125,9 @@ if (
 
 
             if (
-                strlen($newPassword) < 8
+                strlen(
+                    $newPassword
+                ) < 8
             ) {
 
                 throw new Exception(
@@ -879,7 +1176,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Administrator passwords cannot be reset from this page."
+                    "Administrator password cannot be reset here."
                 );
             }
 
@@ -939,12 +1236,34 @@ $students = [];
 
 try {
 
-    $stmt =
-        $conn->query("
-            SELECT
-                s.*,
+    $studentSelect = "s.*";
 
-                c.class_name
+
+    if (
+        tableExists(
+            $conn,
+            "classes"
+        )
+        &&
+        hasColumn(
+            $studentColumns,
+            "class_id"
+        )
+        &&
+        hasColumn(
+            $classColumns,
+            "class_name"
+        )
+    ) {
+
+        $studentSelect .= ",
+            c.class_name
+        ";
+
+
+        $studentSql = "
+            SELECT
+                $studentSelect
 
             FROM students s
 
@@ -952,9 +1271,26 @@ try {
                 ON c.id = s.class_id
 
             ORDER BY
-                s.last_name ASC,
-                s.first_name ASC
-        ");
+                s.id DESC
+        ";
+
+    } else {
+
+        $studentSql = "
+            SELECT *
+
+            FROM students
+
+            ORDER BY id DESC
+        ";
+    }
+
+
+    $stmt =
+        $conn->query(
+            $studentSql
+        );
+
 
     $students =
         $stmt->fetchAll(
@@ -988,10 +1324,9 @@ try {
 
             FROM teachers
 
-            ORDER BY
-                last_name ASC,
-                first_name ASC
+            ORDER BY id DESC
         ");
+
 
     $teachers =
         $stmt->fetchAll(
@@ -1011,8 +1346,13 @@ try {
 
 /*
 |--------------------------------------------------------------------------
-| LOAD ACCOUNTS
+| LOAD USERS
 |--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| We use SELECT * here instead of assuming
+| first_name / last_name exist.
+|
 */
 
 $accounts = [];
@@ -1021,15 +1361,7 @@ try {
 
     $stmt =
         $conn->query("
-            SELECT
-
-                id,
-                username,
-                role,
-                status,
-                first_name,
-                last_name,
-                created_at
+            SELECT *
 
             FROM users
 
@@ -1038,11 +1370,9 @@ try {
                 'teacher'
             )
 
-            ORDER BY
-                role ASC,
-                first_name ASC,
-                last_name ASC
+            ORDER BY id DESC
         ");
+
 
     $accounts =
         $stmt->fetchAll(
@@ -1062,6 +1392,291 @@ try {
 
 /*
 |--------------------------------------------------------------------------
+| BUILD PERSON LOOKUPS
+|--------------------------------------------------------------------------
+*/
+
+$studentLookup = [];
+
+foreach (
+    $students as $student
+) {
+
+    $studentLookup[
+        (int)$student["id"]
+    ] =
+        $student;
+}
+
+
+$teacherLookup = [];
+
+foreach (
+    $teachers as $teacher
+) {
+
+    $teacherLookup[
+        (int)$teacher["id"]
+    ] =
+        $teacher;
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| DETERMINE ACCOUNT PERSON
+|--------------------------------------------------------------------------
+*/
+
+foreach (
+    $accounts as &$account
+) {
+
+    $account["person_name"] =
+        "";
+
+
+    $account["person_identifier"] =
+        "";
+
+
+    $userId =
+        (int)
+        (
+            $account["id"]
+            ?? 0
+        );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Find linked person through user_id
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        $account["role"] ===
+        "student"
+    ) {
+
+        foreach (
+            $students as $student
+        ) {
+
+            if (
+                hasColumn(
+                    $studentColumns,
+                    "user_id"
+                )
+                &&
+                (int)
+                (
+                    $student["user_id"]
+                    ?? 0
+                )
+                ===
+                $userId
+            ) {
+
+                $account[
+                    "person_name"
+                ] =
+                    getPersonName(
+                        $student,
+                        $studentColumns
+                    );
+
+
+                if (
+                    hasColumn(
+                        $studentColumns,
+                        "student_id"
+                    )
+                ) {
+
+                    $account[
+                        "person_identifier"
+                    ] =
+                        (string)
+                        (
+                            $student[
+                                "student_id"
+                            ]
+                            ?? ""
+                        );
+                }
+
+
+                if (
+                    isset(
+                        $student[
+                            "class_name"
+                        ]
+                    )
+                ) {
+
+                    $account[
+                        "class_name"
+                    ] =
+                        $student[
+                            "class_name"
+                        ];
+                }
+
+
+                break;
+            }
+        }
+
+    } else {
+
+        foreach (
+            $teachers as $teacher
+        ) {
+
+            if (
+                hasColumn(
+                    $teacherColumns,
+                    "user_id"
+                )
+                &&
+                (int)
+                (
+                    $teacher["user_id"]
+                    ?? 0
+                )
+                ===
+                $userId
+            ) {
+
+                $account[
+                    "person_name"
+                ] =
+                    getPersonName(
+                        $teacher,
+                        $teacherColumns
+                    );
+
+
+                foreach (
+                    [
+                        "employee_id",
+                        "staff_id",
+                        "teacher_id"
+                    ] as $field
+                ) {
+
+                    if (
+                        hasColumn(
+                            $teacherColumns,
+                            $field
+                        )
+                        &&
+                        !empty(
+                            $teacher[$field]
+                        )
+                    ) {
+
+                        $account[
+                            "person_identifier"
+                        ] =
+                            (string)
+                            $teacher[$field];
+
+                        break;
+                    }
+                }
+
+
+                break;
+            }
+        }
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | FALLBACK TO USERS TABLE
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        trim(
+            $account[
+                "person_name"
+            ]
+        ) === ""
+    ) {
+
+        $nameParts = [];
+
+
+        foreach (
+            [
+                "first_name",
+                "middle_name",
+                "last_name"
+            ] as $field
+        ) {
+
+            if (
+                hasColumn(
+                    $userColumns,
+                    $field
+                )
+                &&
+                !empty(
+                    $account[$field]
+                )
+            ) {
+
+                $nameParts[] =
+                    trim(
+                        (string)
+                        $account[$field]
+                    );
+            }
+        }
+
+
+        if (
+            count($nameParts)
+        ) {
+
+            $account[
+                "person_name"
+            ] =
+                implode(
+                    " ",
+                    $nameParts
+                );
+        }
+    }
+
+
+    if (
+        trim(
+            $account[
+                "person_name"
+            ]
+        ) === ""
+    ) {
+
+        $account[
+            "person_name"
+        ] =
+            "Account #"
+            .
+            $userId;
+    }
+
+}
+
+unset($account);
+
+
+/*
+|--------------------------------------------------------------------------
 | COUNTS
 |--------------------------------------------------------------------------
 */
@@ -1077,14 +1692,16 @@ foreach (
 ) {
 
     if (
-        $account["role"] ===
+        ($account["role"] ?? "")
+        ===
         "student"
     ) {
 
         $studentAccounts++;
 
     } elseif (
-        $account["role"] ===
+        ($account["role"] ?? "")
+        ===
         "teacher"
     ) {
 
@@ -1093,7 +1710,8 @@ foreach (
 
 
     if (
-        $account["status"] ===
+        ($account["status"] ?? "active")
+        ===
         "active"
     ) {
 
@@ -1135,29 +1753,22 @@ HIBS Reports | Account Management
 :root {
 
     --navy: #263238;
-
     --navy2: #37474f;
-
     --slate: #607d8b;
 
     --background: #f4f5f3;
-
     --white: #ffffff;
 
     --line: #dedfdd;
 
     --text: #27353b;
-
     --muted: #7c898e;
 
     --success: #477052;
-
     --success-bg: #edf5ef;
 
     --danger: #914f4f;
-
     --danger-bg: #faeeee;
-
 }
 
 
@@ -1179,11 +1790,7 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| SIDEBAR
-|--------------------------------------------------------------------------
-*/
+/* SIDEBAR */
 
 .sidebar {
 
@@ -1196,8 +1803,7 @@ body {
 
     height: 100vh;
 
-    padding:
-        25px 16px;
+    padding: 25px 16px;
 
     background:
         var(--navy);
@@ -1214,7 +1820,8 @@ body {
     padding:
         3px 11px 24px;
 
-    margin-bottom: 22px;
+    margin-bottom:
+        22px;
 
     border-bottom:
         1px solid
@@ -1314,11 +1921,7 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| MAIN
-|--------------------------------------------------------------------------
-*/
+/* MAIN */
 
 .main {
 
@@ -1402,11 +2005,7 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| ALERT
-|--------------------------------------------------------------------------
-*/
+/* ALERT */
 
 .alert {
 
@@ -1452,11 +2051,7 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| CREDENTIALS
-|--------------------------------------------------------------------------
-*/
+/* CREDENTIALS */
 
 .credentials {
 
@@ -1490,8 +2085,7 @@ body {
     display: grid;
 
     grid-template-columns:
-        130px
-        1fr;
+        160px 1fr;
 
     font-size: 12px;
 
@@ -1513,11 +2107,7 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| STATISTICS
-|--------------------------------------------------------------------------
-*/
+/* STATS */
 
 .stats {
 
@@ -1572,11 +2162,7 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| PANEL
-|--------------------------------------------------------------------------
-*/
+/* PANEL */
 
 .panel {
 
@@ -1625,63 +2211,195 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| TABS
-|--------------------------------------------------------------------------
-*/
+/* FORM */
 
-.tabs {
+.form {
 
-    display: flex;
-
-    border-bottom:
-        1px solid
-        var(--line);
-
-    background:
-        #fafbfa;
+    padding: 22px;
 
 }
 
 
-.tab {
+.form-grid {
 
-    padding:
-        14px 20px;
+    display: grid;
+
+    grid-template-columns:
+        1fr 1fr;
+
+    gap: 17px;
+
+}
+
+
+.form-group.full {
+
+    grid-column:
+        1 / -1;
+
+}
+
+
+label {
+
+    display: block;
+
+    margin-bottom: 7px;
 
     color:
-        #66757b;
+        #647278;
 
-    text-decoration: none;
+    font-size: 10px;
 
-    font-size: 11px;
+    font-weight: 700;
 
-    font-weight: 600;
+    text-transform: uppercase;
 
 }
 
 
-.tab.active {
+select,
+input {
+
+    width: 100%;
+
+    height: 43px;
+
+    padding:
+        0 11px;
+
+    border:
+        1px solid
+        #ccd1cf;
+
+    border-radius: 4px;
 
     background:
         white;
 
     color:
-        var(--navy);
+        var(--text);
 
-    border-bottom:
-        2px solid
+    font-family:
+        inherit;
+
+    font-size: 12px;
+
+}
+
+
+select:focus,
+input:focus {
+
+    outline: none;
+
+    border-color:
         var(--slate);
 
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| TABLE
-|--------------------------------------------------------------------------
-*/
+.help {
+
+    margin-top: 6px;
+
+    color:
+        var(--muted);
+
+    font-size: 9px;
+
+}
+
+
+/* BUTTON */
+
+.btn {
+
+    display: inline-block;
+
+    padding:
+        8px 12px;
+
+    border-radius: 4px;
+
+    font-family:
+        inherit;
+
+    font-size: 9px;
+
+    font-weight: 600;
+
+    cursor: pointer;
+
+}
+
+
+.btn-create {
+
+    border: 0;
+
+    background:
+        var(--navy);
+
+    color: white;
+
+    padding:
+        11px 18px;
+
+}
+
+
+.btn-create:hover {
+
+    background:
+        var(--navy2);
+
+}
+
+
+.btn-danger {
+
+    background: white;
+
+    color:
+        var(--danger);
+
+    border:
+        1px solid
+        #decaca;
+
+}
+
+
+.btn-success {
+
+    background: white;
+
+    color:
+        var(--success);
+
+    border:
+        1px solid
+        #cbdccc;
+
+}
+
+
+.btn-reset {
+
+    background: white;
+
+    color:
+        #60717a;
+
+    border:
+        1px solid
+        #d1d6d4;
+
+}
+
+
+/* TABLE */
 
 .table-wrap {
 
@@ -1804,215 +2522,6 @@ td {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| BUTTONS
-|--------------------------------------------------------------------------
-*/
-
-.btn {
-
-    display: inline-block;
-
-    padding:
-        8px 12px;
-
-    border: 0;
-
-    border-radius: 4px;
-
-    font-family: inherit;
-
-    font-size: 9px;
-
-    font-weight: 600;
-
-    cursor: pointer;
-
-}
-
-
-.btn-create {
-
-    background:
-        var(--navy);
-
-    color: white;
-
-}
-
-
-.btn-create:hover {
-
-    background:
-        var(--navy2);
-
-}
-
-
-.btn-danger {
-
-    background:
-        white;
-
-    color:
-        var(--danger);
-
-    border:
-        1px solid
-        #decaca;
-
-}
-
-
-.btn-success {
-
-    background:
-        white;
-
-    color:
-        var(--success);
-
-    border:
-        1px solid
-        #cbdccc;
-
-}
-
-
-.btn-reset {
-
-    background:
-        white;
-
-    color:
-        #60717a;
-
-    border:
-        1px solid
-        #d1d6d4;
-
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| CREATE FORM
-|--------------------------------------------------------------------------
-*/
-
-.form {
-
-    padding: 22px;
-
-}
-
-
-.form-grid {
-
-    display: grid;
-
-    grid-template-columns:
-        1fr
-        1fr;
-
-    gap: 17px;
-
-}
-
-
-.form-group.full {
-
-    grid-column:
-        1 / -1;
-
-}
-
-
-label {
-
-    display: block;
-
-    margin-bottom: 7px;
-
-    color:
-        #647278;
-
-    font-size: 10px;
-
-    font-weight: 700;
-
-    text-transform: uppercase;
-
-}
-
-
-select,
-input {
-
-    width: 100%;
-
-    height: 43px;
-
-    padding:
-        0 11px;
-
-    border:
-        1px solid
-        #ccd1cf;
-
-    border-radius: 4px;
-
-    background:
-        white;
-
-    color:
-        var(--text);
-
-    font-family:
-        inherit;
-
-    font-size: 12px;
-
-}
-
-
-select:focus,
-input:focus {
-
-    outline: none;
-
-    border-color:
-        var(--slate);
-
-}
-
-
-.help {
-
-    margin-top: 6px;
-
-    color:
-        var(--muted);
-
-    font-size: 9px;
-
-}
-
-
-.form-actions {
-
-    margin-top: 20px;
-
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| EMPTY
-|--------------------------------------------------------------------------
-*/
-
 .empty {
 
     padding:
@@ -2028,11 +2537,7 @@ input:focus {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| MOBILE
-|--------------------------------------------------------------------------
-*/
+/* MOBILE */
 
 @media(max-width:1000px) {
 
@@ -2135,9 +2640,7 @@ input:focus {
 <body>
 
 
-<!-- ======================================================
-     SIDEBAR
-======================================================= -->
+<!-- SIDEBAR -->
 
 <aside class="sidebar">
 
@@ -2169,7 +2672,6 @@ input:focus {
 <a href="dashboard.php">
 
     <span class="icon">▦</span>
-
     Dashboard
 
 </a>
@@ -2178,7 +2680,6 @@ input:focus {
 <a href="academic_setup.php">
 
     <span class="icon">◫</span>
-
     Academic Setup
 
 </a>
@@ -2187,7 +2688,6 @@ input:focus {
 <a href="teacher_assignments.php">
 
     <span class="icon">⟷</span>
-
     Teacher Assignments
 
 </a>
@@ -2196,7 +2696,6 @@ input:focus {
 <a href="students.php">
 
     <span class="icon">♙</span>
-
     Students
 
 </a>
@@ -2205,7 +2704,6 @@ input:focus {
 <a href="teachers.php">
 
     <span class="icon">♙</span>
-
     Teachers
 
 </a>
@@ -2217,7 +2715,6 @@ input:focus {
 >
 
     <span class="icon">♙</span>
-
     Account Management
 
 </a>
@@ -2226,7 +2723,6 @@ input:focus {
 <a href="classes.php">
 
     <span class="icon">□</span>
-
     Classes
 
 </a>
@@ -2235,7 +2731,6 @@ input:focus {
 <a href="subjects.php">
 
     <span class="icon">◇</span>
-
     Subjects
 
 </a>
@@ -2244,7 +2739,6 @@ input:focus {
 <a href="mark_submissions.php">
 
     <span class="icon">✓</span>
-
     Mark Submissions
 
 </a>
@@ -2253,7 +2747,6 @@ input:focus {
 <a href="reports.php">
 
     <span class="icon">▤</span>
-
     Reports
 
 </a>
@@ -2262,7 +2755,6 @@ input:focus {
 <a href="report_approval.php">
 
     <span class="icon">✓</span>
-
     Report Approval
 
 </a>
@@ -2271,7 +2763,6 @@ input:focus {
 <a href="publish_report.php">
 
     <span class="icon">↑</span>
-
     Publish Reports
 
 </a>
@@ -2280,7 +2771,6 @@ input:focus {
 <a href="analytics.php">
 
     <span class="icon">◒</span>
-
     Analytics
 
 </a>
@@ -2289,7 +2779,6 @@ input:focus {
 <a href="database_check.php">
 
     <span class="icon">◉</span>
-
     Database Check
 
 </a>
@@ -2298,7 +2787,6 @@ input:focus {
 <a href="settings.php">
 
     <span class="icon">⚙</span>
-
     Settings
 
 </a>
@@ -2310,9 +2798,7 @@ input:focus {
 </aside>
 
 
-<!-- ======================================================
-     MAIN
-======================================================= -->
+<!-- MAIN -->
 
 <main class="main">
 
@@ -2356,14 +2842,31 @@ input:focus {
 
 
 <?php if (
-    $generatedUsername !== ""
+    $createdUsername !== ""
 ): ?>
 
 <div class="credentials">
 
     <div class="credentials-title">
 
-        Login Credentials
+        New Login Credentials
+
+    </div>
+
+
+    <div class="credentials-row">
+
+        <div class="credentials-label">
+            Account Holder
+        </div>
+
+        <div class="credentials-value">
+
+            <?= h(
+                $createdPerson
+            ) ?>
+
+        </div>
 
     </div>
 
@@ -2377,7 +2880,7 @@ input:focus {
         <div class="credentials-value">
 
             <?= h(
-                $generatedUsername
+                $createdUsername
             ) ?>
 
         </div>
@@ -2394,7 +2897,7 @@ input:focus {
         <div class="credentials-value">
 
             <?= h(
-                $generatedPassword
+                $createdPassword
             ) ?>
 
         </div>
@@ -2410,8 +2913,8 @@ input:focus {
         "
     >
 
-        Give these credentials to the account holder securely.
-        The password is stored in encrypted form and cannot be viewed later.
+        Give these credentials to the student or teacher securely.
+        The password is stored as a secure hash and cannot be retrieved later.
 
     </div>
 
@@ -2438,9 +2941,7 @@ input:focus {
 <?php endif; ?>
 
 
-<!-- ====================================================
-     STATISTICS
-===================================================== -->
+<!-- STATISTICS -->
 
 <section class="stats">
 
@@ -2452,11 +2953,9 @@ input:focus {
     </div>
 
     <div class="stat-number">
-
         <?= number_format(
             $studentAccounts
         ) ?>
-
     </div>
 
 </div>
@@ -2469,11 +2968,9 @@ input:focus {
     </div>
 
     <div class="stat-number">
-
         <?= number_format(
             $teacherAccounts
         ) ?>
-
     </div>
 
 </div>
@@ -2486,11 +2983,9 @@ input:focus {
     </div>
 
     <div class="stat-number">
-
         <?= number_format(
             $activeAccounts
         ) ?>
-
     </div>
 
 </div>
@@ -2503,11 +2998,9 @@ input:focus {
     </div>
 
     <div class="stat-number">
-
         <?= number_format(
             $inactiveAccounts
         ) ?>
-
     </div>
 
 </div>
@@ -2516,9 +3009,7 @@ input:focus {
 </section>
 
 
-<!-- ====================================================
-     CREATE ACCOUNT
-===================================================== -->
+<!-- CREATE ACCOUNT -->
 
 <section class="panel">
 
@@ -2526,9 +3017,7 @@ input:focus {
 <div class="panel-header">
 
     <div class="panel-title">
-
         Create Login Account
-
     </div>
 
     <div class="panel-description">
@@ -2556,7 +3045,7 @@ input:focus {
 <div class="form-grid">
 
 
-<div class="form-group">
+<div>
 
 <label>
     Account Type
@@ -2586,7 +3075,7 @@ input:focus {
 </div>
 
 
-<div class="form-group">
+<div>
 
 <label>
     Person
@@ -2608,7 +3097,7 @@ input:focus {
 </div>
 
 
-<div class="form-group">
+<div>
 
 <label>
     Username
@@ -2619,7 +3108,7 @@ input:focus {
     type="text"
     name="username"
     id="username"
-    placeholder="e.g. HIBS-2026-001"
+    placeholder="Username"
     required
     minlength="4"
 >
@@ -2627,14 +3116,14 @@ input:focus {
 
 <div class="help">
 
-Use letters, numbers, dots, underscores or hyphens.
+The system will suggest the student's ID or teacher's staff ID when available.
 
 </div>
 
 </div>
 
 
-<div class="form-group">
+<div>
 
 <label>
     Temporary Password
@@ -2652,7 +3141,7 @@ Use letters, numbers, dots, underscores or hyphens.
 
 <div class="help">
 
-The password will be securely hashed before storage.
+Minimum 8 characters.
 
 </div>
 
@@ -2660,8 +3149,6 @@ The password will be securely hashed before storage.
 
 
 <div class="form-group full">
-
-<div class="form-actions">
 
 <button
     type="submit"
@@ -2671,8 +3158,6 @@ The password will be securely hashed before storage.
     Create Login Account
 
 </button>
-
-</div>
 
 </div>
 
@@ -2686,9 +3171,7 @@ The password will be securely hashed before storage.
 </section>
 
 
-<!-- ====================================================
-     EXISTING ACCOUNTS
-===================================================== -->
+<!-- EXISTING ACCOUNTS -->
 
 <section class="panel">
 
@@ -2703,7 +3186,7 @@ The password will be securely hashed before storage.
 
     <div class="panel-description">
 
-        Manage active and inactive student and teacher accounts.
+        Student and teacher accounts currently registered in HIBS Reports.
 
     </div>
 
@@ -2726,7 +3209,7 @@ The password will be securely hashed before storage.
 <tr>
 
 <th>
-    Name
+    Account Holder
 </th>
 
 <th>
@@ -2758,8 +3241,7 @@ The password will be securely hashed before storage.
 
 
 <?php foreach (
-    $accounts
-    as $account
+    $accounts as $account
 ): ?>
 
 
@@ -2768,27 +3250,57 @@ The password will be securely hashed before storage.
 
 <td>
 
-
 <div class="person-name">
 
-<?= h(
-    trim(
-        ($account[
-            "first_name"
+    <?= h(
+        $account[
+            "person_name"
         ]
-        ?? "")
-        .
-        " "
-        .
-        ($account[
-            "last_name"
-        ]
-        ?? "")
-    )
-    ?: "Unnamed Account"
-) ?>
+    ) ?>
 
 </div>
+
+
+<?php if (
+    !empty(
+        $account[
+            "person_identifier"
+        ]
+    )
+): ?>
+
+<div class="person-meta">
+
+    <?= h(
+        $account[
+            "person_identifier"
+        ]
+    ) ?>
+
+</div>
+
+<?php endif; ?>
+
+
+<?php if (
+    !empty(
+        $account[
+            "class_name"
+        ]
+    )
+): ?>
+
+<div class="person-meta">
+
+    <?= h(
+        $account[
+            "class_name"
+        ]
+    ) ?>
+
+</div>
+
+<?php endif; ?>
 
 
 </td>
@@ -2799,7 +3311,7 @@ The password will be securely hashed before storage.
     <?= h(
         $account[
             "username"
-        ]
+        ] ?? ""
     ) ?>
 
 </td>
@@ -2811,9 +3323,12 @@ The password will be securely hashed before storage.
 
     <?= h(
         ucfirst(
-            $account[
-                "role"
-            ]
+            (string)
+            (
+                $account[
+                    "role"
+                ] ?? ""
+            )
         )
     ) ?>
 
@@ -2826,9 +3341,13 @@ The password will be securely hashed before storage.
 
 
 <?php if (
-    $account[
-        "status"
-    ] === "active"
+    (
+        $account[
+            "status"
+        ] ?? "active"
+    )
+    ===
+    "active"
 ): ?>
 
 <span class="badge active">
@@ -2855,21 +3374,23 @@ The password will be securely hashed before storage.
 
 <?php
 
+$createdAt =
+    $account[
+        "created_at"
+    ]
+    ??
+    null;
+
+
 if (
-    !empty(
-        $account[
-            "created_at"
-        ]
-    )
+    $createdAt
 ) {
 
     echo h(
         date(
             "d M Y",
             strtotime(
-                $account[
-                    "created_at"
-                ]
+                (string)$createdAt
             )
         )
     );
@@ -2888,9 +3409,13 @@ if (
 
 
 <?php if (
-    $account[
-        "status"
-    ] === "active"
+    (
+        $account[
+            "status"
+        ] ?? "active"
+    )
+    ===
+    "active"
 ): ?>
 
 
@@ -2987,8 +3512,12 @@ if (
     onclick="
         resetPassword(
             <?= (int)$account["id"] ?>,
-            '<?= h($account["username"]) ?>'
-        )
+            '<?= h(
+                $account[
+                    "username"
+                ] ?? ""
+            ) ?>'
+        );
     "
 >
 
@@ -3008,7 +3537,6 @@ if (
 
 </tbody>
 
-
 </table>
 
 
@@ -3017,7 +3545,7 @@ if (
 
 <div class="empty">
 
-    No student or teacher login accounts have been created yet.
+    No student or teacher accounts have been created yet.
 
 </div>
 
@@ -3037,39 +3565,37 @@ if (
 </main>
 
 
-<!-- ======================================================
-     JAVASCRIPT
-======================================================= -->
-
 <script>
 
 /*
 |--------------------------------------------------------------------------
-| PEOPLE DATA
+| DATA FROM PHP
 |--------------------------------------------------------------------------
 */
 
-const students = <?= json_encode(
-    $students,
-    JSON_HEX_TAG |
-    JSON_HEX_APOS |
-    JSON_HEX_QUOT |
-    JSON_HEX_AMP
-) ?>;
+const students =
+    <?= json_encode(
+        $students,
+        JSON_HEX_TAG |
+        JSON_HEX_APOS |
+        JSON_HEX_QUOT |
+        JSON_HEX_AMP
+    ) ?>;
 
 
-const teachers = <?= json_encode(
-    $teachers,
-    JSON_HEX_TAG |
-    JSON_HEX_APOS |
-    JSON_HEX_QUOT |
-    JSON_HEX_AMP
-) ?>;
+const teachers =
+    <?= json_encode(
+        $teachers,
+        JSON_HEX_TAG |
+        JSON_HEX_APOS |
+        JSON_HEX_QUOT |
+        JSON_HEX_AMP
+    ) ?>;
 
 
 /*
 |--------------------------------------------------------------------------
-| ACCOUNT TYPE CHANGE
+| ELEMENTS
 |--------------------------------------------------------------------------
 */
 
@@ -3091,6 +3617,12 @@ const username =
     );
 
 
+/*
+|--------------------------------------------------------------------------
+| LOAD PEOPLE
+|--------------------------------------------------------------------------
+*/
+
 personType.addEventListener(
     "change",
     function () {
@@ -3098,19 +3630,29 @@ personType.addEventListener(
         personId.innerHTML =
             '<option value="">Select Person</option>';
 
-
         username.value = "";
 
 
-        const list =
-            this.value === "student"
-            ? students
-            : teachers;
+        let people = [];
 
 
         if (
-            !this.value
+            this.value ===
+            "student"
         ) {
+
+            people =
+                students;
+
+        } else if (
+            this.value ===
+            "teacher"
+        ) {
+
+            people =
+                teachers;
+
+        } else {
 
             personId.innerHTML =
                 '<option value="">Select account type first</option>';
@@ -3119,8 +3661,10 @@ personType.addEventListener(
         }
 
 
-        list.forEach(
-            function (person) {
+        people.forEach(
+            function (
+                person
+            ) {
 
                 const option =
                     document.createElement(
@@ -3132,7 +3676,8 @@ personType.addEventListener(
                     person.id;
 
 
-                let name = "";
+                let name =
+                    "";
 
 
                 if (
@@ -3167,17 +3712,23 @@ personType.addEventListener(
 
 
                 if (
-                    name.trim() === ""
+                    !name.trim()
                 ) {
 
                     name =
-                        "Person #"
-                        +
-                        person.id;
+                        person.name
+                        ??
+                        person.full_name
+                        ??
+                        (
+                            "Person #"
+                            +
+                            person.id
+                        );
                 }
 
 
-                option.textContent =
+                name =
                     name.trim();
 
 
@@ -3188,7 +3739,7 @@ personType.addEventListener(
                     person.student_id
                 ) {
 
-                    option.textContent +=
+                    name +=
                         " — "
                         +
                         person.student_id;
@@ -3200,24 +3751,30 @@ personType.addEventListener(
                     "teacher"
                 ) {
 
-                    const employeeId =
+                    const staffId =
                         person.employee_id
                         ??
                         person.staff_id
+                        ??
+                        person.teacher_id
                         ??
                         "";
 
 
                     if (
-                        employeeId
+                        staffId
                     ) {
 
-                        option.textContent +=
+                        name +=
                             " — "
                             +
-                            employeeId;
+                            staffId;
                     }
                 }
+
+
+                option.textContent =
+                    name;
 
 
                 personId.appendChild(
@@ -3260,15 +3817,17 @@ personId.addEventListener(
         }
 
 
-        const list =
+        const people =
             type === "student"
             ? students
             : teachers;
 
 
         const person =
-            list.find(
-                function (item) {
+            people.find(
+                function (
+                    item
+                ) {
 
                     return parseInt(
                         item.id,
@@ -3288,7 +3847,8 @@ personId.addEventListener(
 
 
         if (
-            type === "student"
+            type ===
+            "student"
             &&
             person.student_id
         ) {
@@ -3301,49 +3861,64 @@ personId.addEventListener(
 
 
         if (
-            type === "teacher"
+            type ===
+            "teacher"
         ) {
 
-            const employeeId =
+            const staffId =
                 person.employee_id
                 ??
                 person.staff_id
+                ??
+                person.teacher_id
                 ??
                 "";
 
 
             if (
-                employeeId
+                staffId
             ) {
 
                 username.value =
-                    employeeId;
+                    staffId;
 
                 return;
             }
 
 
+            const first =
+                (
+                    person.first_name
+                    ??
+                    ""
+                )
+                .trim()
+                .toLowerCase();
+
+
+            const last =
+                (
+                    person.last_name
+                    ??
+                    ""
+                )
+                .trim()
+                .toLowerCase();
+
+
             if (
-                person.first_name
-                ||
-                person.last_name
+                first ||
+                last
             ) {
 
                 username.value =
                     (
-                        (
-                            person.first_name
-                            ?? ""
-                        )
+                        first
                         +
                         "."
                         +
-                        (
-                            person.last_name
-                            ?? ""
-                        )
+                        last
                     )
-                    .toLowerCase()
                     .replace(
                         /\s+/g,
                         ""
@@ -3368,8 +3943,10 @@ function resetPassword(
 
     const password =
         prompt(
-            "Enter a new password for " +
-            username +
+            "Enter a new password for "
+            +
+            username
+            +
             ":\n\nMinimum 8 characters."
         );
 
@@ -3434,18 +4011,18 @@ function resetPassword(
         userId;
 
 
-    const passwordInput =
+    const pass =
         document.createElement(
             "input"
         );
 
-    passwordInput.type =
+    pass.type =
         "hidden";
 
-    passwordInput.name =
+    pass.name =
         "new_password";
 
-    passwordInput.value =
+    pass.value =
         password;
 
 
@@ -3458,7 +4035,7 @@ function resetPassword(
     );
 
     form.appendChild(
-        passwordInput
+        pass
     );
 
 
