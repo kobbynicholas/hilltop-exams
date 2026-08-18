@@ -484,6 +484,8 @@ $teachers = $conn->query("
 
                         <td>
 
+    <td>
+
     <a
         href="teacher_assign.php?id=<?= $teacher["id"] ?>"
         class="btn btn-gold"
