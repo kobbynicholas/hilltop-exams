@@ -10,16 +10,11 @@ error_reporting(E_ALL);
 
 /*
 |--------------------------------------------------------------------------
-| HIBS STUDENT REPORT CENTRE
+| HIBS REPORTS
+| STUDENT REPORT CENTRE
 |--------------------------------------------------------------------------
 */
 
-
-/*
-|--------------------------------------------------------------------------
-| HELPER
-|--------------------------------------------------------------------------
-*/
 
 function h($value): string
 {
@@ -50,187 +45,343 @@ if (
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| STUDENT ID
-|--------------------------------------------------------------------------
-*/
-
-$studentId =
+$userId =
     (int)$_SESSION["user_id"];
 
 
-$reports = [];
+/*
+|--------------------------------------------------------------------------
+| FIND STUDENT
+|--------------------------------------------------------------------------
+*/
 
-$error = "";
+$stmt = $conn->prepare("
+    SELECT
+
+        id,
+        student_id,
+        first_name,
+        middle_name,
+        last_name,
+        photo
+
+    FROM students
+
+    WHERE user_id = ?
+
+    LIMIT 1
+");
+
+$stmt->execute([
+    $userId
+]);
+
+$student =
+    $stmt->fetch(
+        PDO::FETCH_ASSOC
+    );
 
 
 /*
 |--------------------------------------------------------------------------
-| LOAD PUBLISHED REPORTS
+| FALLBACK
+|--------------------------------------------------------------------------
+|
+| Some HIBS installations may use students.id
+| directly in the session.
+|
+*/
+
+if (!$student) {
+
+    $sessionStudentId =
+        $_SESSION["student_id"]
+        ?? null;
+
+
+    if ($sessionStudentId) {
+
+        $stmt = $conn->prepare("
+            SELECT
+
+                id,
+                student_id,
+                first_name,
+                middle_name,
+                last_name,
+                photo
+
+            FROM students
+
+            WHERE id = ?
+
+            LIMIT 1
+        ");
+
+        $stmt->execute([
+            (int)$sessionStudentId
+        ]);
+
+        $student =
+            $stmt->fetch(
+                PDO::FETCH_ASSOC
+            );
+    }
+}
+
+
+if (!$student) {
+
+    die(
+        "Student profile could not be found."
+    );
+}
+
+
+$studentDatabaseId =
+    (int)$student["id"];
+
+
+/*
+|--------------------------------------------------------------------------
+| FILTERS
 |--------------------------------------------------------------------------
 */
 
-try {
+$academicYearId =
+    filter_input(
+        INPUT_GET,
+        "academic_year_id",
+        FILTER_VALIDATE_INT
+    );
+
+$termId =
+    filter_input(
+        INPUT_GET,
+        "term_id",
+        FILTER_VALIDATE_INT
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| ACADEMIC YEARS WITH PUBLISHED REPORTS
+|--------------------------------------------------------------------------
+*/
+
+$stmt = $conn->prepare("
+    SELECT DISTINCT
+
+        ay.id,
+        ay.academic_year
+
+    FROM report_card_records r
+
+    INNER JOIN terms t
+        ON t.id = r.term_id
+
+    INNER JOIN academic_years ay
+        ON ay.id = t.academic_year_id
+
+    WHERE
+
+        r.student_id = ?
+
+        AND r.report_status = 'Published'
+
+    ORDER BY ay.id DESC
+");
+
+$stmt->execute([
+    $studentDatabaseId
+]);
+
+$academicYears =
+    $stmt->fetchAll(
+        PDO::FETCH_ASSOC
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| TERMS
+|--------------------------------------------------------------------------
+*/
+
+$terms = [];
+
+
+if (
+    $academicYearId
+) {
 
     $stmt = $conn->prepare("
-        SELECT
+        SELECT DISTINCT
 
-            r.id AS report_id,
-
-            r.student_id,
-
-            r.class_id,
-
-            r.term_id,
-
-            r.report_status,
-
-            r.average_score,
-
-            r.position,
-
-            r.class_size,
-
-            r.days_opened,
-
-            r.days_present,
-
-            r.days_absent,
-
-            r.conduct,
-
-            r.promotion_status,
-
-            r.published_at,
-
-            c.class_name,
-
-            t.term_name,
-
-            ay.academic_year
+            t.id,
+            t.term_name
 
         FROM report_card_records r
 
-        INNER JOIN classes c
-            ON c.id = r.class_id
-
         INNER JOIN terms t
             ON t.id = r.term_id
-
-        INNER JOIN academic_years ay
-            ON ay.id = t.academic_year_id
 
         WHERE
 
             r.student_id = ?
 
+            AND t.academic_year_id = ?
+
             AND r.report_status = 'Published'
 
-        ORDER BY
-
-            ay.id DESC,
-
-            t.id DESC,
-
-            r.published_at DESC
-
+        ORDER BY t.id ASC
     ");
 
-
     $stmt->execute([
-        $studentId
+
+        $studentDatabaseId,
+
+        $academicYearId
+
     ]);
 
-
-    $reports =
+    $terms =
         $stmt->fetchAll(
             PDO::FETCH_ASSOC
         );
-
-
-} catch (
-    Throwable $e
-) {
-
-    $error =
-        $e->getMessage();
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| STUDENT INFORMATION
+| LOAD REPORTS
 |--------------------------------------------------------------------------
 */
 
-$student = null;
+$sql = "
+    SELECT
+
+        r.id,
+
+        r.average_score,
+
+        r.position,
+
+        r.class_size,
+
+        r.report_status,
+
+        r.published_at,
+
+        c.class_name,
+
+        t.term_name,
+
+        ay.academic_year
+
+    FROM report_card_records r
+
+    INNER JOIN classes c
+        ON c.id = r.class_id
+
+    INNER JOIN terms t
+        ON t.id = r.term_id
+
+    INNER JOIN academic_years ay
+        ON ay.id = t.academic_year_id
+
+    WHERE
+
+        r.student_id = ?
+
+        AND r.report_status = 'Published'
+";
 
 
-try {
-
-    $stmt = $conn->prepare("
-        SELECT
-
-            student_id,
-
-            first_name,
-
-            middle_name,
-
-            last_name,
-
-            photo,
-
-            class_id
-
-        FROM students
-
-        WHERE id = ?
-
-        LIMIT 1
-    ");
+$params = [
+    $studentDatabaseId
+];
 
 
-    $stmt->execute([
-        $studentId
-    ]);
-
-
-    $student =
-        $stmt->fetch(
-            PDO::FETCH_ASSOC
-        );
-
-
-} catch (
-    Throwable $e
+if (
+    $academicYearId
 ) {
 
-    /*
-    | Keep report page functioning even if
-    | student profile information fails.
-    */
+    $sql .= "
+        AND ay.id = ?
+    ";
+
+    $params[] =
+        $academicYearId;
 }
 
 
-$studentName = "Student";
+if (
+    $termId
+) {
 
+    $sql .= "
+        AND t.id = ?
+    ";
 
-if ($student) {
-
-    $studentName =
-        trim(
-            implode(
-                " ",
-                array_filter([
-                    $student["first_name"] ?? "",
-                    $student["middle_name"] ?? "",
-                    $student["last_name"] ?? ""
-                ])
-            )
-        );
+    $params[] =
+        $termId;
 }
+
+
+$sql .= "
+    ORDER BY
+
+        ay.id DESC,
+
+        t.id ASC,
+
+        r.id DESC
+";
+
+
+$stmt =
+    $conn->prepare(
+        $sql
+    );
+
+$stmt->execute(
+    $params
+);
+
+$reports =
+    $stmt->fetchAll(
+        PDO::FETCH_ASSOC
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| STUDENT NAME
+|--------------------------------------------------------------------------
+*/
+
+$studentName =
+    trim(
+        implode(
+            " ",
+            array_filter([
+
+                $student[
+                    "first_name"
+                ] ?? "",
+
+                $student[
+                    "middle_name"
+                ] ?? "",
+
+                $student[
+                    "last_name"
+                ] ?? ""
+
+            ])
+        )
+    );
 
 
 /*
@@ -243,7 +394,6 @@ $photoPath = "";
 
 
 if (
-    $student &&
     !empty(
         $student["photo"]
     )
@@ -251,14 +401,14 @@ if (
 
     $possiblePhotos = [
 
-        "../uploads/students/"
-        . $student["photo"],
+        "../uploads/students/" .
+        $student["photo"],
 
-        "../uploads/"
-        . $student["photo"],
+        "../uploads/" .
+        $student["photo"],
 
-        "../assets/uploads/students/"
-        . $student["photo"]
+        "../assets/uploads/students/" .
+        $student["photo"]
 
     ];
 
@@ -270,9 +420,9 @@ if (
 
         if (
             is_file(
-                __DIR__
-                . "/"
-                . $photo
+                __DIR__ .
+                "/" .
+                $photo
             )
         ) {
 
@@ -283,28 +433,6 @@ if (
         }
     }
 }
-
-
-/*
-|--------------------------------------------------------------------------
-| STATISTICS
-|--------------------------------------------------------------------------
-*/
-
-$totalReports =
-    count($reports);
-
-
-$latestReport =
-    $reports[0]
-    ?? null;
-
-
-$latestAverage =
-    $latestReport[
-        "average_score"
-    ]
-    ?? null;
 
 ?>
 
@@ -321,11 +449,6 @@ $latestAverage =
     content="width=device-width, initial-scale=1.0"
 >
 
-<meta
-    name="theme-color"
-    content="#263238"
->
-
 <title>
     HIBS | My Reports
 </title>
@@ -333,21 +456,14 @@ $latestAverage =
 
 <style>
 
-/* =========================================================
-   RESET
-========================================================= */
-
 * {
     box-sizing: border-box;
 }
 
-html,
-body {
-    margin: 0;
-    padding: 0;
-}
 
 body {
+
+    margin: 0;
 
     background: #f5f4f0;
 
@@ -369,18 +485,19 @@ body {
 
     position: fixed;
 
-    left: 0;
     top: 0;
+    left: 0;
 
-    width: 245px;
+    width: 235px;
 
     height: 100vh;
+
+    padding:
+        27px 17px;
 
     background: #263238;
 
     color: #ffffff;
-
-    padding: 28px 18px;
 
 }
 
@@ -388,9 +505,9 @@ body {
 .brand {
 
     padding:
-        4px 10px 28px;
+        3px 10px 25px;
 
-    margin-bottom: 22px;
+    margin-bottom: 20px;
 
     border-bottom:
         1px solid
@@ -401,7 +518,7 @@ body {
 
 .brand-title {
 
-    font-size: 18px;
+    font-size: 17px;
 
     font-weight: 700;
 
@@ -414,13 +531,97 @@ body {
 
     margin-top: 6px;
 
-    color: #b9c3c8;
+    color: #aeb8bc;
 
-    font-size: 9px;
+    font-size: 8px;
 
-    line-height: 1.5;
+    line-height: 1.6;
 
-    letter-spacing: 1px;
+    letter-spacing: .7px;
+
+}
+
+
+.student-mini {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 9px;
+
+    padding:
+        0 8px 20px;
+
+}
+
+
+.student-mini-photo {
+
+    width: 34px;
+
+    height: 34px;
+
+    border-radius: 50%;
+
+    object-fit: cover;
+
+    border:
+        1px solid
+        rgba(255,255,255,.2);
+
+}
+
+
+.student-mini-placeholder {
+
+    width: 34px;
+
+    height: 34px;
+
+    border-radius: 50%;
+
+    background: #455a64;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+}
+
+
+.student-mini-name {
+
+    max-width: 145px;
+
+    color: #ffffff;
+
+    font-size: 8px;
+
+    font-weight: 600;
+
+    white-space: nowrap;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
+
+}
+
+
+.student-mini-id {
+
+    margin-top: 3px;
+
+    color: #9ba7ab;
+
+    font-size: 6px;
 
 }
 
@@ -428,11 +629,11 @@ body {
 .nav-title {
 
     padding:
-        0 10px 8px;
+        0 10px 7px;
 
-    color: #8e9ba1;
+    color: #879399;
 
-    font-size: 8px;
+    font-size: 7px;
 
     font-weight: bold;
 
@@ -447,7 +648,7 @@ body {
 
     display: block;
 
-    padding: 12px;
+    padding: 11px;
 
     margin-bottom: 4px;
 
@@ -455,7 +656,7 @@ body {
 
     text-decoration: none;
 
-    font-size: 11px;
+    font-size: 10px;
 
     border-radius: 4px;
 
@@ -473,30 +674,22 @@ body {
 
     background: #546e7a;
 
-    color: #ffffff;
-
-}
-
-
-.sidebar-bottom {
-
-    position: absolute;
-
-    left: 18px;
-    right: 18px;
-
-    bottom: 22px;
-
 }
 
 
 .logout {
 
-    display: block;
+    position: absolute;
 
-    padding: 11px;
+    left: 17px;
+    right: 17px;
+    bottom: 20px;
+
+    padding: 10px;
 
     color: #dce2e5;
+
+    text-decoration: none;
 
     border:
         1px solid
@@ -504,9 +697,7 @@ body {
 
     text-align: center;
 
-    text-decoration: none;
-
-    font-size: 10px;
+    font-size: 9px;
 
     border-radius: 4px;
 
@@ -519,23 +710,19 @@ body {
 
 .main {
 
-    margin-left: 245px;
+    margin-left: 235px;
 
     min-height: 100vh;
 
 }
 
 
-/* =========================================================
-   TOPBAR
-========================================================= */
-
 .topbar {
 
-    height: 72px;
+    height: 70px;
 
     padding:
-        0 35px;
+        0 32px;
 
     background: #ffffff;
 
@@ -554,22 +741,18 @@ body {
 
 .topbar-title {
 
-    color: #263238;
-
-    font-size: 17px;
+    font-size: 16px;
 
     font-weight: 600;
 
 }
 
 
-.student-account {
+.topbar-right {
 
-    color: #546e7a;
+    color: #7b878b;
 
-    font-size: 10px;
-
-    font-weight: 600;
+    font-size: 8px;
 
 }
 
@@ -580,63 +763,57 @@ body {
 
 .content {
 
-    padding:
-        30px 35px;
+    max-width: 1250px;
 
-    max-width: 1400px;
+    padding:
+        28px 32px;
 
 }
 
 
 /* =========================================================
-   PAGE HEADER
+   PAGE TITLE
 ========================================================= */
 
-.page-header {
+.page-title {
 
-    display: flex;
-
-    align-items: center;
-
-    justify-content: space-between;
-
-    gap: 20px;
-
-    margin-bottom: 25px;
+    margin-bottom: 22px;
 
 }
 
 
-.page-header h1 {
+.page-title h1 {
 
     margin: 0;
 
-    color: #263238;
-
-    font-size: 25px;
+    font-size: 24px;
 
     font-weight: 600;
 
 }
 
 
-.page-header p {
+.page-title p {
 
     margin:
         7px 0 0;
 
-    color: #7a858a;
+    color: #7d898d;
 
-    font-size: 10px;
+    font-size: 9px;
 
 }
 
 
 /* =========================================================
-   PROFILE SUMMARY
+   PROFILE CARD
 ========================================================= */
 
-.profile {
+.profile-card {
+
+    margin-bottom: 20px;
+
+    padding: 18px;
 
     background: #ffffff;
 
@@ -644,39 +821,41 @@ body {
         1px solid
         #deddd8;
 
-    padding: 20px;
-
-    margin-bottom: 22px;
-
     display: flex;
 
     align-items: center;
 
-    gap: 17px;
+    gap: 14px;
 
 }
 
 
 .profile-photo {
 
-    width: 65px;
-    height: 75px;
+    width: 58px;
+
+    height: 58px;
 
     object-fit: cover;
 
+    border-radius: 50%;
+
     border:
         1px solid
-        #d0cfca;
+        #d4d3ce;
 
 }
 
 
 .profile-placeholder {
 
-    width: 65px;
-    height: 75px;
+    width: 58px;
 
-    background: #eef0ef;
+    height: 58px;
+
+    border-radius: 50%;
+
+    background: #ececea;
 
     display: flex;
 
@@ -684,22 +863,18 @@ body {
 
     justify-content: center;
 
-    text-align: center;
+    color: #7c898d;
 
-    color: #899398;
+    font-size: 9px;
 
-    font-size: 7px;
+    font-weight: bold;
 
 }
 
 
 .profile-name {
 
-    margin: 0;
-
-    color: #37474f;
-
-    font-size: 17px;
+    font-size: 15px;
 
     font-weight: 600;
 
@@ -708,34 +883,22 @@ body {
 
 .profile-id {
 
-    margin-top: 6px;
+    margin-top: 5px;
 
-    color: #899398;
+    color: #7f8b8f;
 
-    font-size: 9px;
+    font-size: 8px;
 
 }
 
 
 /* =========================================================
-   STATISTICS
+   FILTER
 ========================================================= */
 
-.stats {
+.filter-panel {
 
-    display: grid;
-
-    grid-template-columns:
-        repeat(3, 1fr);
-
-    gap: 15px;
-
-    margin-bottom: 22px;
-
-}
-
-
-.stat {
+    margin-bottom: 20px;
 
     padding: 18px;
 
@@ -748,62 +911,160 @@ body {
 }
 
 
-.stat-label {
+.filter-title {
 
-    color: #7a858a;
+    margin-bottom: 13px;
 
-    font-size: 8px;
-
-    font-weight: bold;
-
-    text-transform: uppercase;
-
-    letter-spacing: .5px;
-
-}
-
-
-.stat-value {
-
-    margin-top: 7px;
-
-    color: #37474f;
-
-    font-size: 22px;
+    font-size: 12px;
 
     font-weight: 600;
 
 }
 
 
-/* =========================================================
-   ERROR
-========================================================= */
+.filters {
 
-.alert {
+    display: grid;
 
-    margin-bottom: 20px;
+    grid-template-columns:
+        1fr
+        1fr
+        auto;
 
-    padding: 13px 15px;
+    gap: 10px;
 
-    background: #fbf1f1;
+    align-items: end;
+
+}
+
+
+.field label {
+
+    display: block;
+
+    margin-bottom: 6px;
+
+    color: #68767b;
+
+    font-size: 7px;
+
+    font-weight: bold;
+
+    text-transform: uppercase;
+
+}
+
+
+.field select {
+
+    width: 100%;
+
+    height: 37px;
+
+    padding:
+        0 10px;
 
     border:
         1px solid
-        #e1c8c8;
+        #d2d1cc;
 
-    color: #8b4b4b;
+    background: #ffffff;
 
-    font-size: 9px;
+    color: #455a64;
+
+    font-family: inherit;
+
+    font-size: 8px;
+
+    border-radius: 3px;
+
+}
+
+
+.filter-button {
+
+    height: 37px;
+
+    padding:
+        0 15px;
+
+    border: 0;
+
+    border-radius: 3px;
+
+    background: #455a64;
+
+    color: #ffffff;
+
+    font-family: inherit;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    cursor: pointer;
+
+}
+
+
+.clear-button {
+
+    display: inline-flex;
+
+    height: 37px;
+
+    padding:
+        0 13px;
+
+    align-items: center;
+
+    justify-content: center;
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #d2d1cc;
+
+    border-radius: 3px;
+
+    color: #68767b;
+
+    text-decoration: none;
+
+    font-size: 8px;
 
 }
 
 
 /* =========================================================
-   REPORT SECTION
+   REPORTS
 ========================================================= */
 
-.section {
+.section-title {
+
+    margin-bottom: 11px;
+
+    font-size: 13px;
+
+    font-weight: 600;
+
+}
+
+
+.report-grid {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(2, 1fr);
+
+    gap: 14px;
+
+}
+
+
+.report-card {
 
     background: #ffffff;
 
@@ -814,10 +1075,9 @@ body {
 }
 
 
-.section-header {
+.report-card-header {
 
-    padding:
-        19px 21px;
+    padding: 16px;
 
     border-bottom:
         1px solid
@@ -825,148 +1085,45 @@ body {
 
     display: flex;
 
-    align-items: center;
+    align-items: flex-start;
 
     justify-content: space-between;
+
+    gap: 10px;
 
 }
 
 
-.section-header h2 {
+.report-term {
 
-    margin: 0;
-
-    color: #37474f;
-
-    font-size: 15px;
+    font-size: 12px;
 
     font-weight: 600;
 
 }
 
 
-.section-header p {
+.report-year {
 
-    margin: 5px 0 0;
+    margin-top: 4px;
 
-    color: #899398;
+    color: #7e898d;
 
-    font-size: 9px;
-
-}
-
-
-/* =========================================================
-   REPORT GRID
-========================================================= */
-
-.report-grid {
-
-    padding: 20px;
-
-    display: grid;
-
-    grid-template-columns:
-        repeat(2, 1fr);
-
-    gap: 15px;
-
-}
-
-
-/* =========================================================
-   REPORT CARD
-========================================================= */
-
-.report-card {
-
-    border:
-        1px solid
-        #deddd8;
-
-    background: #ffffff;
-
-    transition:
-        box-shadow .15s ease,
-        transform .15s ease;
-
-}
-
-
-.report-card:hover {
-
-    box-shadow:
-        0 4px 14px
-        rgba(38,50,56,.08);
-
-    transform:
-        translateY(-1px);
-
-}
-
-
-.report-card-top {
-
-    padding: 17px;
-
-    border-bottom:
-        1px solid
-        #e9e8e4;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: space-between;
-
-    gap: 15px;
-
-}
-
-
-.term {
-
-    color: #37474f;
-
-    font-size: 14px;
-
-    font-weight: 600;
-
-}
-
-
-.year {
-
-    margin-top: 5px;
-
-    color: #899398;
-
-    font-size: 8px;
+    font-size: 7px;
 
 }
 
 
 .published {
 
-    margin-top: 5px;
-
-    color: #a0a7a9;
-
-    font-size: 7px;
-
-}
-
-
-.badge {
-
     padding:
-        6px 9px;
+        5px 7px;
 
-    background: #e8f1eb;
+    background: #e8f0eb;
 
-    color: #3e6b4e;
+    color: #496b55;
 
-    font-size: 7px;
+    font-size: 6px;
 
     font-weight: bold;
 
@@ -975,20 +1132,21 @@ body {
 }
 
 
-/* =========================================================
-   REPORT INFORMATION
-========================================================= */
+.report-body {
 
-.report-info {
+    padding: 16px;
 
-    padding: 17px;
+}
+
+
+.info-grid {
 
     display: grid;
 
     grid-template-columns:
         repeat(3, 1fr);
 
-    gap: 10px;
+    gap: 8px;
 
 }
 
@@ -997,11 +1155,7 @@ body {
 
     padding: 10px;
 
-    background: #f7f7f4;
-
-    border:
-        1px solid
-        #ecebe7;
+    background: #f6f6f3;
 
     text-align: center;
 
@@ -1010,9 +1164,9 @@ body {
 
 .info-label {
 
-    color: #899398;
+    color: #818c90;
 
-    font-size: 7px;
+    font-size: 6px;
 
     font-weight: bold;
 
@@ -1025,7 +1179,90 @@ body {
 
     margin-top: 5px;
 
-    color: #455a64;
+    color: #37474f;
+
+    font-size: 13px;
+
+    font-weight: 700;
+
+}
+
+
+.report-actions {
+
+    margin-top: 14px;
+
+    display: flex;
+
+    gap: 7px;
+
+}
+
+
+.action {
+
+    flex: 1;
+
+    height: 34px;
+
+    display: inline-flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    border-radius: 3px;
+
+    text-decoration: none;
+
+    font-size: 7px;
+
+    font-weight: bold;
+
+}
+
+
+.view {
+
+    background: #455a64;
+
+    color: #ffffff;
+
+}
+
+
+.print {
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #d1d0cb;
+
+    color: #5d6c72;
+
+}
+
+
+.empty {
+
+    padding:
+        65px 20px;
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #deddd8;
+
+    text-align: center;
+
+}
+
+
+.empty-title {
+
+    color: #526269;
 
     font-size: 13px;
 
@@ -1034,130 +1271,16 @@ body {
 }
 
 
-/* =========================================================
-   REPORT FOOT
-========================================================= */
+.empty-text {
 
-.report-card-footer {
-
-    padding:
-        13px 17px;
-
-    background: #fafaf8;
-
-    border-top:
-        1px solid
-        #e9e8e4;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: space-between;
-
-    gap: 10px;
-
-}
-
-
-.class-name {
-
-    color: #7a858a;
-
-    font-size: 8px;
-
-}
-
-
-.view-button {
-
-    display: inline-block;
-
-    padding:
-        9px 12px;
-
-    background: #455a64;
-
-    color: #ffffff;
-
-    text-decoration: none;
-
-    font-size: 8px;
-
-    font-weight: bold;
-
-    border-radius: 3px;
-
-}
-
-
-.view-button:hover {
-
-    background: #263238;
-
-}
-
-
-/* =========================================================
-   EMPTY
-========================================================= */
-
-.empty {
-
-    padding:
-        65px 20px;
-
-    text-align: center;
-
-}
-
-
-.empty-icon {
-
-    width: 55px;
-    height: 55px;
-
-    margin:
-        0 auto 14px;
-
-    background: #edf0ef;
-
-    border-radius: 50%;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    color: #78909c;
-
-    font-size: 22px;
-
-}
-
-
-.empty h3 {
-
-    margin: 0;
-
-    color: #455a64;
-
-    font-size: 15px;
-
-}
-
-
-.empty p {
-
-    max-width: 450px;
+    max-width: 420px;
 
     margin:
         8px auto 0;
 
     color: #899398;
 
-    font-size: 9px;
+    font-size: 8px;
 
     line-height: 1.7;
 
@@ -1168,7 +1291,7 @@ body {
    RESPONSIVE
 ========================================================= */
 
-@media(max-width:950px) {
+@media(max-width:900px) {
 
     .report-grid {
 
@@ -1194,15 +1317,6 @@ body {
     }
 
 
-    .brand {
-
-        padding-bottom: 15px;
-
-        margin-bottom: 12px;
-
-    }
-
-
     .nav-title {
 
         display: none;
@@ -1214,18 +1328,16 @@ body {
 
         display: inline-block;
 
-        padding: 8px 9px;
-
-        margin-right: 3px;
+        padding: 8px;
 
     }
 
 
-    .sidebar-bottom {
+    .logout {
 
         position: static;
 
-        margin-top: 15px;
+        margin-top: 12px;
 
     }
 
@@ -1237,75 +1349,31 @@ body {
     }
 
 
-    .topbar {
-
-        padding:
-            0 18px;
-
-    }
-
-
     .content {
 
         padding:
-            22px 15px;
+            20px 15px;
 
     }
 
 
-    .page-header {
-
-        display: block;
-
-    }
-
-
-    .stats {
-
-        grid-template-columns: 1fr;
-
-    }
-
-}
-
-
-@media(max-width:500px) {
-
-    .profile {
-
-        align-items: flex-start;
-
-    }
-
-
-    .report-info {
+    .filters {
 
         grid-template-columns: 1fr;
 
     }
 
 
-    .report-card-top {
+    .profile-card {
 
         align-items: flex-start;
 
-        flex-direction: column;
-
     }
 
 
-    .report-card-footer {
+    .info-grid {
 
-        align-items: stretch;
-
-        flex-direction: column;
-
-    }
-
-
-    .view-button {
-
-        text-align: center;
+        grid-template-columns: 1fr;
 
     }
 
@@ -1326,67 +1394,117 @@ body {
 <aside class="sidebar">
 
 
-    <div class="brand">
+<div class="brand">
 
-        <div class="brand-title">
-            HIBS REPORTS
-        </div>
+    <div class="brand-title">
+        HIBS REPORTS
+    </div>
 
-        <div class="brand-subtitle">
-            HILLTOP INTERNATIONAL<br>
-            BRITISH SCHOOL
-        </div>
+    <div class="brand-subtitle">
+
+        HILLTOP INTERNATIONAL<br>
+        BRITISH SCHOOL
 
     </div>
 
+</div>
 
-    <div class="nav-title">
-        Student Portal
+
+<div class="student-mini">
+
+
+<?php if (
+    $photoPath
+): ?>
+
+    <img
+        src="<?= h(
+            $photoPath
+        ) ?>"
+        class="student-mini-photo"
+        alt="Student"
+    >
+
+<?php else: ?>
+
+    <div class="student-mini-placeholder">
+
+        <?= h(
+            strtoupper(
+                substr(
+                    $studentName,
+                    0,
+                    1
+                )
+            )
+        ) ?>
+
     </div>
 
-
-    <a
-        href="dashboard.php"
-        class="nav-link"
-    >
-        Dashboard
-    </a>
+<?php endif; ?>
 
 
-    <a
-        href="reports.php"
-        class="nav-link active"
-    >
-        My Reports
-    </a>
+<div>
 
+    <div class="student-mini-name">
 
-    <a
-        href="profile.php"
-        class="nav-link"
-    >
-        My Profile
-    </a>
-
-
-    <a
-        href="schedule.php"
-        class="nav-link"
-    >
-        My Schedule
-    </a>
-
-
-    <div class="sidebar-bottom">
-
-        <a
-            href="../logout.php"
-            class="logout"
-        >
-            Sign Out
-        </a>
+        <?= h(
+            $studentName
+        ) ?>
 
     </div>
+
+    <div class="student-mini-id">
+
+        <?= h(
+            $student[
+                "student_id"
+            ]
+        ) ?>
+
+    </div>
+
+</div>
+
+
+</div>
+
+
+<div class="nav-title">
+    Student Portal
+</div>
+
+
+<a
+    href="dashboard.php"
+    class="nav-link"
+>
+    Dashboard
+</a>
+
+
+<a
+    href="reports.php"
+    class="nav-link active"
+>
+    My Reports
+</a>
+
+
+<a
+    href="profile.php"
+    class="nav-link"
+>
+    My Profile
+</a>
+
+
+<a
+    href="../logout.php"
+    class="logout"
+>
+    Sign Out
+</a>
 
 
 </aside>
@@ -1399,590 +1517,529 @@ body {
 <div class="main">
 
 
-    <header class="topbar">
+<header class="topbar">
 
 
-        <div class="topbar-title">
+<div class="topbar-title">
 
-            My Academic Reports
+    My Academic Reports
 
-        </div>
+</div>
 
 
-        <div class="student-account">
+<div class="topbar-right">
 
-            <?= h(
-                $studentName
-            ) ?>
+    <?= h(
+        $student[
+            "student_id"
+        ]
+    ) ?>
 
-        </div>
+</div>
 
 
-    </header>
+</header>
 
 
-    <main class="content">
+<main class="content">
 
 
-        <!-- =================================================
-             PAGE HEADER
-        ================================================== -->
+<!-- PAGE TITLE -->
 
-        <section class="page-header">
+<div class="page-title">
 
+    <h1>
+        Academic Reports
+    </h1>
 
-            <div>
+    <p>
+        View your officially published academic reports.
+    </p>
 
-                <h1>
-                    My Reports
-                </h1>
+</div>
 
-                <p>
-                    View your official published academic
-                    reports by term.
-                </p>
 
-            </div>
+<!-- PROFILE -->
 
+<div class="profile-card">
 
-        </section>
 
+<?php if (
+    $photoPath
+): ?>
 
-        <?php if (
-            $error !== ""
-        ): ?>
+    <img
+        src="<?= h(
+            $photoPath
+        ) ?>"
+        class="profile-photo"
+        alt="Student"
+    >
 
-            <div class="alert">
+<?php else: ?>
 
-                <?= h(
-                    $error
-                ) ?>
+    <div class="profile-placeholder">
 
-            </div>
+        <?= h(
+            strtoupper(
+                substr(
+                    $studentName,
+                    0,
+                    1
+                )
+            )
+        ) ?>
 
-        <?php endif; ?>
+    </div>
 
+<?php endif; ?>
 
-        <!-- =================================================
-             PROFILE
-        ================================================== -->
 
-        <section class="profile">
+<div>
 
+    <div class="profile-name">
 
-            <?php if (
-                $photoPath !== ""
-            ): ?>
+        <?= h(
+            $studentName
+        ) ?>
 
-                <img
-                    src="<?= h(
-                        $photoPath
-                    ) ?>"
-                    class="profile-photo"
-                    alt="Student photograph"
-                >
+    </div>
 
-            <?php else: ?>
 
-                <div class="profile-placeholder">
+    <div class="profile-id">
 
-                    STUDENT<br>
-                    PHOTO
+        Student ID:
 
-                </div>
+        <?= h(
+            $student[
+                "student_id"
+            ]
+        ) ?>
 
-            <?php endif; ?>
+    </div>
 
-
-            <div>
-
-
-                <h2 class="profile-name">
-
-                    <?= h(
-                        $studentName
-                    ) ?>
-
-                </h2>
-
-
-                <?php if (
-                    $student
-                ): ?>
-
-                    <div class="profile-id">
-
-                        Student ID:
-
-                        <strong>
-
-                            <?= h(
-                                $student[
-                                    "student_id"
-                                ]
-                            ) ?>
-
-                        </strong>
-
-                    </div>
-
-                <?php endif; ?>
-
-
-            </div>
-
-
-        </section>
-
-
-        <!-- =================================================
-             STATISTICS
-        ================================================== -->
-
-        <section class="stats">
-
-
-            <div class="stat">
-
-                <div class="stat-label">
-
-                    Published Reports
-
-                </div>
-
-
-                <div class="stat-value">
-
-                    <?= number_format(
-                        $totalReports
-                    ) ?>
-
-                </div>
-
-            </div>
-
-
-            <div class="stat">
-
-                <div class="stat-label">
-
-                    Latest Average
-
-                </div>
-
-
-                <div class="stat-value">
-
-                    <?php if (
-                        $latestAverage !== null
-                    ): ?>
-
-                        <?= number_format(
-                            (float)$latestAverage,
-                            2
-                        ) ?>%
-
-                    <?php else: ?>
-
-                        —
-
-                    <?php endif; ?>
-
-                </div>
-
-            </div>
-
-
-            <div class="stat">
-
-                <div class="stat-label">
-
-                    Latest Class
-
-                </div>
-
-
-                <div class="stat-value">
-
-                    <?= h(
-                        $latestReport[
-                            "class_name"
-                        ]
-                        ?? "—"
-                    ) ?>
-
-                </div>
-
-            </div>
-
-
-        </section>
-
-
-        <!-- =================================================
-             REPORTS
-        ================================================== -->
-
-        <section class="section">
-
-
-            <div class="section-header">
-
-
-                <div>
-
-                    <h2>
-                        Published Reports
-                    </h2>
-
-                    <p>
-                        Official reports released by HIBS.
-                    </p>
-
-                </div>
-
-
-                <div>
-
-                    <?= number_format(
-                        $totalReports
-                    ) ?>
-
-                    report(s)
-
-                </div>
-
-
-            </div>
-
-
-            <?php if (
-                count($reports) > 0
-            ): ?>
-
-
-                <div class="report-grid">
-
-
-                    <?php foreach (
-                        $reports
-                        as $report
-                    ): ?>
-
-
-                        <?php
-
-                        $average =
-                            $report[
-                                "average_score"
-                            ];
-
-
-                        $position =
-                            $report[
-                                "position"
-                            ];
-
-
-                        $classSize =
-                            $report[
-                                "class_size"
-                            ];
-
-
-                        $publishedDate =
-                            "—";
-
-
-                        if (
-                            !empty(
-                                $report[
-                                    "published_at"
-                                ]
-                            )
-                        ) {
-
-                            $timestamp =
-                                strtotime(
-                                    $report[
-                                        "published_at"
-                                    ]
-                                );
-
-
-                            if (
-                                $timestamp
-                            ) {
-
-                                $publishedDate =
-                                    date(
-                                        "d M Y",
-                                        $timestamp
-                                    );
-                            }
-                        }
-
-                        ?>
-
-
-                        <article
-                            class="report-card"
-                        >
-
-
-                            <!-- TOP -->
-
-                            <div class="report-card-top">
-
-
-                                <div>
-
-
-                                    <div class="term">
-
-                                        <?= h(
-                                            $report[
-                                                "term_name"
-                                            ]
-                                        ) ?>
-
-                                    </div>
-
-
-                                    <div class="year">
-
-                                        Academic Year:
-
-                                        <?= h(
-                                            $report[
-                                                "academic_year"
-                                            ]
-                                        ) ?>
-
-                                    </div>
-
-
-                                    <div class="published">
-
-                                        Published:
-
-                                        <?= h(
-                                            $publishedDate
-                                        ) ?>
-
-                                    </div>
-
-
-                                </div>
-
-
-                                <span class="badge">
-
-                                    Published
-
-                                </span>
-
-
-                            </div>
-
-
-                            <!-- INFORMATION -->
-
-                            <div class="report-info">
-
-
-                                <div class="info">
-
-
-                                    <div class="info-label">
-
-                                        Average
-
-                                    </div>
-
-
-                                    <div class="info-value">
-
-                                        <?php if (
-                                            $average
-                                            !== null
-                                        ): ?>
-
-                                            <?= number_format(
-                                                (float)$average,
-                                                2
-                                            ) ?>%
-
-                                        <?php else: ?>
-
-                                            —
-
-                                        <?php endif; ?>
-
-                                    </div>
-
-
-                                </div>
-
-
-                                <div class="info">
-
-
-                                    <div class="info-label">
-
-                                        Position
-
-                                    </div>
-
-
-                                    <div class="info-value">
-
-                                        <?php if (
-                                            $position
-                                            !== null &&
-                                            $position
-                                            !== ""
-                                        ): ?>
-
-                                            <?= h(
-                                                $position
-                                            ) ?>
-
-                                            <?php if (
-                                                $classSize
-                                            ): ?>
-
-                                                /
-                                                <?= h(
-                                                    $classSize
-                                                ) ?>
-
-                                            <?php endif; ?>
-
-                                        <?php else: ?>
-
-                                            —
-
-                                        <?php endif; ?>
-
-                                    </div>
-
-
-                                </div>
-
-
-                                <div class="info">
-
-
-                                    <div class="info-label">
-
-                                        Conduct
-
-                                    </div>
-
-
-                                    <div class="info-value">
-
-                                        <?= h(
-                                            $report[
-                                                "conduct"
-                                            ]
-                                            ?? "—"
-                                        ) ?>
-
-                                    </div>
-
-
-                                </div>
-
-
-                            </div>
-
-
-                            <!-- FOOTER -->
-
-                            <div
-                                class="report-card-footer"
-                            >
-
-
-                                <div class="class-name">
-
-                                    Class:
-
-                                    <strong>
-
-                                        <?= h(
-                                            $report[
-                                                "class_name"
-                                            ]
-                                        ) ?>
-
-                                    </strong>
-
-                                </div>
-
-
-                                <a
-                                    href="../student_report.php?id=<?= (int)$report["report_id"] ?>"
-                                    class="view-button"
-                                >
-                                    View Official Report
-                                </a>
-
-
-                            </div>
-
-
-                        </article>
-
-
-                    <?php endforeach; ?>
-
-
-                </div>
-
-
-            <?php else: ?>
-
-
-                <div class="empty">
-
-
-                    <div class="empty-icon">
-                        ▣
-                    </div>
-
-
-                    <h3>
-
-                        No Published Reports
-
-                    </h3>
-
-
-                    <p>
-
-                        Your official academic reports will
-                        appear here once HIBS has completed,
-                        approved and published them.
-
-                    </p>
-
-
-                </div>
-
-
-            <?php endif; ?>
-
-
-        </section>
-
-
-    </main>
+</div>
 
 
 </div>
+
+
+<!-- FILTER -->
+
+<section class="filter-panel">
+
+
+<div class="filter-title">
+
+    Find a Report
+
+</div>
+
+
+<form
+    method="GET"
+>
+
+
+<div class="filters">
+
+
+<div class="field">
+
+<label>
+    Academic Year
+</label>
+
+
+<select
+    name="academic_year_id"
+    onchange="
+        document
+        .getElementById(
+            'filterForm'
+        )
+        .submit();
+    "
+>
+
+<option value="">
+
+    All Academic Years
+
+</option>
+
+
+<?php foreach (
+    $academicYears
+    as $year
+): ?>
+
+<option
+    value="<?= (int)$year["id"] ?>"
+    <?= (
+        (int)$academicYearId
+        ===
+        (int)$year["id"]
+    )
+        ? "selected"
+        : ""
+    ?>
+>
+
+    <?= h(
+        $year[
+            "academic_year"
+        ]
+    ) ?>
+
+</option>
+
+<?php endforeach; ?>
+
+
+</select>
+
+</div>
+
+
+<div class="field">
+
+<label>
+    Term
+</label>
+
+
+<select
+    name="term_id"
+>
+
+<option value="">
+
+    All Terms
+
+</option>
+
+
+<?php foreach (
+    $terms
+    as $term
+): ?>
+
+<option
+    value="<?= (int)$term["id"] ?>"
+    <?= (
+        (int)$termId
+        ===
+        (int)$term["id"]
+    )
+        ? "selected"
+        : ""
+    ?>
+>
+
+    <?= h(
+        $term[
+            "term_name"
+        ]
+    ) ?>
+
+</option>
+
+<?php endforeach; ?>
+
+
+</select>
+
+</div>
+
+
+<div>
+
+<button
+    type="submit"
+    class="filter-button"
+>
+    Filter Reports
+</button>
+
+</div>
+
+
+</div>
+
+
+</form>
+
+
+<?php if (
+    $academicYearId ||
+    $termId
+): ?>
+
+<br>
+
+
+<a
+    href="reports.php"
+    class="clear-button"
+>
+    Clear Filters
+</a>
+
+
+<?php endif; ?>
+
+
+</section>
+
+
+<!-- REPORT LIST -->
+
+<div class="section-title">
+
+    Published Reports
+
+</div>
+
+
+<?php if (
+    count($reports) > 0
+): ?>
+
+
+<div class="report-grid">
+
+
+<?php foreach (
+    $reports
+    as $report
+): ?>
+
+
+<article class="report-card">
+
+
+<div class="report-card-header">
+
+
+<div>
+
+    <div class="report-term">
+
+        <?= h(
+            $report[
+                "term_name"
+            ]
+        ) ?>
+
+    </div>
+
+
+    <div class="report-year">
+
+        <?= h(
+            $report[
+                "academic_year"
+            ]
+        ) ?>
+
+        &nbsp; • &nbsp;
+
+        <?= h(
+            $report[
+                "class_name"
+            ]
+        ) ?>
+
+    </div>
+
+</div>
+
+
+<div class="published">
+
+    Published
+
+</div>
+
+
+</div>
+
+
+<div class="report-body">
+
+
+<div class="info-grid">
+
+
+<div class="info">
+
+    <div class="info-label">
+        Average
+    </div>
+
+    <div class="info-value">
+
+        <?php if (
+            $report[
+                "average_score"
+            ] !== null
+        ): ?>
+
+            <?= number_format(
+                (float)$report[
+                    "average_score"
+                ],
+                2
+            ) ?>%
+
+        <?php else: ?>
+
+            —
+
+        <?php endif; ?>
+
+    </div>
+
+</div>
+
+
+<div class="info">
+
+    <div class="info-label">
+        Position
+    </div>
+
+    <div class="info-value">
+
+        <?php if (
+            $report[
+                "position"
+            ] !== null
+        ): ?>
+
+            <?= h(
+                $report[
+                    "position"
+                ]
+            ) ?>
+
+        <?php else: ?>
+
+            —
+
+        <?php endif; ?>
+
+    </div>
+
+</div>
+
+
+<div class="info">
+
+    <div class="info-label">
+        Class Size
+    </div>
+
+    <div class="info-value">
+
+        <?= h(
+            $report[
+                "class_size"
+            ]
+            ??
+            "—"
+        ) ?>
+
+    </div>
+
+</div>
+
+
+</div>
+
+
+<div class="report-actions">
+
+
+<a
+    href="../student_report.php?id=<?= (int)$report["id"] ?>"
+    class="action view"
+    target="_blank"
+    rel="noopener"
+>
+    View Full Report
+</a>
+
+
+<a
+    href="../student_report_print.php?id=<?= (int)$report["id"] ?>"
+    class="action print"
+    target="_blank"
+    rel="noopener"
+>
+    Print / Save PDF
+</a>
+
+
+</div>
+
+
+</div>
+
+
+</article>
+
+
+<?php endforeach; ?>
+
+
+</div>
+
+
+<?php else: ?>
+
+
+<div class="empty">
+
+
+<div class="empty-title">
+
+    No Published Reports
+
+</div>
+
+
+<div class="empty-text">
+
+    Your academic reports will appear here once
+    the school has completed the review and
+    officially published them.
+
+</div>
+
+
+</div>
+
+
+<?php endif; ?>
+
+
+</main>
+
+
+</div>
+
+
+<script>
+
+const filterForm =
+    document.querySelector(
+        "form"
+    );
+
+
+</script>
 
 
 </body>
