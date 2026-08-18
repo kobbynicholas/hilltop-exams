@@ -484,15 +484,22 @@ $teachers = $conn->query("
 
                         <td>
 
-                            <a
-                                href="teachers.php?delete=<?= $teacher["id"] ?>"
-                                class="btn btn-danger"
-                                onclick="return confirm('Delete this teacher?')"
-                            >
-                                Delete
-                            </a>
+    <a
+        href="teacher_assign.php?id=<?= $teacher["id"] ?>"
+        class="btn btn-gold"
+    >
+        Assign
+    </a>
 
-                        </td>
+    <a
+        href="teachers.php?delete=<?= $teacher["id"] ?>"
+        class="btn btn-danger"
+        onclick="return confirm('Delete this teacher?')"
+    >
+        Delete
+    </a>
+
+</td>
 
                     </tr>
 
