@@ -2113,7 +2113,7 @@ body {
 }
 
 .section-label {
-    font-size: 10px;
+    font-size: 12px;
 }
 
 .nav a {
@@ -2131,7 +2131,7 @@ body {
 }
 
 .user-role {
-    font-size: 9px;
+    font-size: 11px;
 }
 
 .topbar {
@@ -2143,11 +2143,11 @@ body {
 }
 
 .topbar-left p {
-    font-size: 11px;
+    font-size: 13px;
 }
 
 .date {
-    font-size: 11px;
+    font-size: 13px;
 }
 
 .welcome h2 {
@@ -2164,7 +2164,7 @@ body {
 }
 
 .stat-label {
-    font-size: 11px;
+    font-size: 13px;
 }
 
 .stat-number {
@@ -2174,7 +2174,7 @@ body {
 
 .stat-description {
     margin-top: 8px;
-    font-size: 11px;
+    font-size: 13px;
 }
 
 .status {
@@ -2182,7 +2182,7 @@ body {
 }
 
 .status-label {
-    font-size: 10px;
+    font-size: 12px;
 }
 
 .status-number {
@@ -2200,11 +2200,11 @@ body {
 
 .panel-subtitle {
     margin-top: 5px;
-    font-size: 10px;
+    font-size: 11px;
 }
 
 .panel-link {
-    font-size: 10px;
+    font-size: 12px;
 }
 
 .activity-row {
@@ -2212,21 +2212,21 @@ body {
 }
 
 .student-name {
-    font-size: 12px;
+    font-size: 13px;
 }
 
 .student-meta {
     margin-top: 4px;
-    font-size: 9px;
+    font-size: 11px;
 }
 
 .cell {
-    font-size: 10px;
+    font-size: 12px;
 }
 
 .badge {
     padding: 6px 9px;
-    font-size: 9px;
+    font-size: 11px;
 }
 
 .quick-grid {
@@ -2245,12 +2245,12 @@ body {
 
 .quick-title {
     margin-top: 9px;
-    font-size: 12px;
+    font-size: 14px;
 }
 
 .quick-text {
     margin-top: 5px;
-    font-size: 9px;
+    font-size: 11px;
 }
 
 .snapshot {
@@ -2262,11 +2262,11 @@ body {
 }
 
 .snapshot-label {
-    font-size: 10px;
+    font-size: 12px;
 }
 
 .snapshot-value {
-    font-size: 12px;
+    font-size: 13px;
 }
 
 .health {
@@ -2274,25 +2274,25 @@ body {
 }
 
 .health-title {
-    font-size: 12px;
+    font-size: 14px;
 }
 
 .health-status {
-    font-size: 10px;
+    font-size: 12px;
 }
 
 .health-text {
     margin-top: 9px;
-    font-size: 10px;
+    font-size: 11px;
 }
 
 .footer {
-    font-size: 10px;
+    font-size: 12px;
 }
 
 .empty {
     padding: 45px 20px;
-    font-size: 11px;
+    font-size: 13px;
 }
 
 
