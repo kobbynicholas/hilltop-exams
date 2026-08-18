@@ -2515,6 +2515,19 @@ body {
 
 
 <a
+    href="account.php"
+>
+
+    <span class="nav-icon">
+        ◉
+    </span>
+
+   Account Management
+
+</a>
+    
+
+<a
     href="settings.php"
 >
 
