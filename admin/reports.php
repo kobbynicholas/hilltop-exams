@@ -4,13 +4,6 @@ session_start();
 
 require_once "../config/db.php";
 
-
-/*
-|--------------------------------------------------------------------------
-| HIBS REPORTING CONTROL CENTRE
-|--------------------------------------------------------------------------
-*/
-
 ini_set("display_errors", "0");
 error_reporting(E_ALL);
 
@@ -41,11 +34,7 @@ if (
     !isset($_SESSION["user_id"]) ||
     ($_SESSION["role"] ?? "") !== "admin"
 ) {
-
-    header(
-        "Location: ../login.php"
-    );
-
+    header("Location: ../login.php");
     exit;
 }
 
@@ -56,31 +45,27 @@ if (
 |--------------------------------------------------------------------------
 */
 
-$academicYearId =
-    filter_input(
-        INPUT_GET,
-        "academic_year_id",
-        FILTER_VALIDATE_INT
-    );
+$academicYearId = filter_input(
+    INPUT_GET,
+    "academic_year_id",
+    FILTER_VALIDATE_INT
+);
 
-$termId =
-    filter_input(
-        INPUT_GET,
-        "term_id",
-        FILTER_VALIDATE_INT
-    );
+$termId = filter_input(
+    INPUT_GET,
+    "term_id",
+    FILTER_VALIDATE_INT
+);
 
-$classId =
-    filter_input(
-        INPUT_GET,
-        "class_id",
-        FILTER_VALIDATE_INT
-    );
+$classId = filter_input(
+    INPUT_GET,
+    "class_id",
+    FILTER_VALIDATE_INT
+);
 
-$statusFilter =
-    trim(
-        $_GET["status"] ?? ""
-    );
+$statusFilter = trim(
+    $_GET["status"] ?? ""
+);
 
 
 /*
@@ -99,12 +84,11 @@ $error = "";
 
 /*
 |--------------------------------------------------------------------------
-| LOAD FILTER DATA
+| LOAD DATA
 |--------------------------------------------------------------------------
 */
 
 try {
-
 
     /*
     |--------------------------------------------------------------------------
@@ -114,19 +98,15 @@ try {
 
     $stmt = $conn->query("
         SELECT
-
             id,
             academic_year
-
         FROM academic_years
-
         ORDER BY id DESC
     ");
 
-    $academicYears =
-        $stmt->fetchAll(
-            PDO::FETCH_ASSOC
-        );
+    $academicYears = $stmt->fetchAll(
+        PDO::FETCH_ASSOC
+    );
 
 
     /*
@@ -137,20 +117,16 @@ try {
 
     $stmt = $conn->query("
         SELECT
-
             id,
             term_name,
             academic_year_id
-
         FROM terms
-
         ORDER BY id DESC
     ");
 
-    $terms =
-        $stmt->fetchAll(
-            PDO::FETCH_ASSOC
-        );
+    $terms = $stmt->fetchAll(
+        PDO::FETCH_ASSOC
+    );
 
 
     /*
@@ -161,19 +137,15 @@ try {
 
     $stmt = $conn->query("
         SELECT
-
             id,
             class_name
-
         FROM classes
-
         ORDER BY class_name ASC
     ");
 
-    $classes =
-        $stmt->fetchAll(
-            PDO::FETCH_ASSOC
-        );
+    $classes = $stmt->fetchAll(
+        PDO::FETCH_ASSOC
+    );
 
 
     /*
@@ -236,70 +208,60 @@ try {
         WHERE 1 = 1
     ";
 
-
     $params = [];
 
 
     /*
     |--------------------------------------------------------------------------
-    | ACADEMIC YEAR FILTER
+    | ACADEMIC YEAR
     |--------------------------------------------------------------------------
     */
 
-    if (
-        $academicYearId
-    ) {
+    if ($academicYearId) {
 
         $sql .= "
             AND t.academic_year_id = ?
         ";
 
-        $params[] =
-            $academicYearId;
+        $params[] = $academicYearId;
     }
 
 
     /*
     |--------------------------------------------------------------------------
-    | TERM FILTER
+    | TERM
     |--------------------------------------------------------------------------
     */
 
-    if (
-        $termId
-    ) {
+    if ($termId) {
 
         $sql .= "
             AND r.term_id = ?
         ";
 
-        $params[] =
-            $termId;
+        $params[] = $termId;
     }
 
 
     /*
     |--------------------------------------------------------------------------
-    | CLASS FILTER
+    | CLASS
     |--------------------------------------------------------------------------
     */
 
-    if (
-        $classId
-    ) {
+    if ($classId) {
 
         $sql .= "
             AND r.class_id = ?
         ";
 
-        $params[] =
-            $classId;
+        $params[] = $classId;
     }
 
 
     /*
     |--------------------------------------------------------------------------
-    | STATUS FILTER
+    | STATUS
     |--------------------------------------------------------------------------
     */
 
@@ -308,7 +270,6 @@ try {
         "Approved",
         "Published"
     ];
-
 
     if (
         in_array(
@@ -322,8 +283,7 @@ try {
             AND r.report_status = ?
         ";
 
-        $params[] =
-            $statusFilter;
+        $params[] = $statusFilter;
     }
 
 
@@ -350,33 +310,18 @@ try {
     ";
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | EXECUTE
-    |--------------------------------------------------------------------------
-    */
+    $stmt = $conn->prepare($sql);
 
-    $stmt =
-        $conn->prepare(
-            $sql
-        );
+    $stmt->execute($params);
 
-    $stmt->execute(
-        $params
+    $reports = $stmt->fetchAll(
+        PDO::FETCH_ASSOC
     );
 
-    $reports =
-        $stmt->fetchAll(
-            PDO::FETCH_ASSOC
-        );
 
+} catch (Throwable $e) {
 
-} catch (
-    Throwable $e
-) {
-
-    $error =
-        $e->getMessage();
+    $error = $e->getMessage();
 }
 
 
@@ -386,61 +331,34 @@ try {
 |--------------------------------------------------------------------------
 */
 
-$totalReports = count(
-    $reports
-);
+$totalReports = count($reports);
 
 $draftCount = 0;
 $approvedCount = 0;
 $publishedCount = 0;
 
+foreach ($reports as $report) {
 
-foreach (
-    $reports
-    as $report
-) {
-
-    switch (
-        $report["report_status"]
-    ) {
+    switch ($report["report_status"] ?? "") {
 
         case "Draft":
-
             $draftCount++;
-
             break;
-
 
         case "Approved":
-
             $approvedCount++;
-
             break;
-
 
         case "Published":
-
             $publishedCount++;
-
             break;
-
     }
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| ATTENTION COUNT
-|--------------------------------------------------------------------------
-*/
-
-$attentionCount =
-    $draftCount;
-
-
-/*
-|--------------------------------------------------------------------------
-| ADMIN NAME
+| ADMIN
 |--------------------------------------------------------------------------
 */
 
@@ -478,10 +396,6 @@ $adminName =
 
 <style>
 
-/* =========================================================
-   HIBS ADMIN REPORTING CENTRE
-========================================================= */
-
 * {
     box-sizing: border-box;
 }
@@ -493,16 +407,12 @@ body {
 }
 
 body {
-
     background: #f5f4f0;
-
     color: #263238;
-
     font-family:
         Arial,
         Helvetica,
         sans-serif;
-
 }
 
 
@@ -514,21 +424,19 @@ body {
 
     position: fixed;
 
-    left: 0;
     top: 0;
+    left: 0;
 
     width: 245px;
-
     height: 100vh;
 
     background: #263238;
 
-    color: #fff;
+    color: #ffffff;
 
     padding: 28px 18px;
 
     z-index: 100;
-
 }
 
 
@@ -542,20 +450,15 @@ body {
     border-bottom:
         1px solid
         rgba(255,255,255,.12);
-
 }
 
 
 .brand-title {
 
-    color: #fff;
-
     font-size: 18px;
-
     font-weight: 700;
 
     letter-spacing: 1px;
-
 }
 
 
@@ -570,7 +473,6 @@ body {
     line-height: 1.5;
 
     letter-spacing: 1px;
-
 }
 
 
@@ -588,7 +490,6 @@ body {
     text-transform: uppercase;
 
     letter-spacing: 1px;
-
 }
 
 
@@ -607,23 +508,17 @@ body {
     font-size: 11px;
 
     border-radius: 4px;
-
 }
 
 
 .nav-link:hover {
-
     background: #37474f;
-
 }
 
 
 .nav-link.active {
-
     background: #546e7a;
-
-    color: #fff;
-
+    color: #ffffff;
 }
 
 
@@ -635,7 +530,6 @@ body {
     right: 18px;
 
     bottom: 22px;
-
 }
 
 
@@ -645,11 +539,11 @@ body {
 
     padding: 11px;
 
+    color: #dce2e5;
+
     border:
         1px solid
         rgba(255,255,255,.15);
-
-    color: #dce2e5;
 
     text-align: center;
 
@@ -658,7 +552,6 @@ body {
     font-size: 10px;
 
     border-radius: 4px;
-
 }
 
 
@@ -667,11 +560,8 @@ body {
 ========================================================= */
 
 .main {
-
     margin-left: 245px;
-
     min-height: 100vh;
-
 }
 
 
@@ -686,7 +576,7 @@ body {
     padding:
         0 35px;
 
-    background: #fff;
+    background: #ffffff;
 
     border-bottom:
         1px solid
@@ -697,7 +587,6 @@ body {
     align-items: center;
 
     justify-content: space-between;
-
 }
 
 
@@ -708,7 +597,6 @@ body {
     font-size: 17px;
 
     font-weight: 600;
-
 }
 
 
@@ -719,7 +607,6 @@ body {
     font-size: 10px;
 
     font-weight: 600;
-
 }
 
 
@@ -733,7 +620,6 @@ body {
         30px 35px;
 
     max-width: 1600px;
-
 }
 
 
@@ -752,7 +638,6 @@ body {
     gap: 20px;
 
     margin-bottom: 25px;
-
 }
 
 
@@ -765,7 +650,6 @@ body {
     font-size: 25px;
 
     font-weight: 600;
-
 }
 
 
@@ -777,18 +661,17 @@ body {
     color: #7a858a;
 
     font-size: 11px;
-
 }
 
 
-.view-all {
+.dashboard-btn {
 
     padding:
         10px 14px;
 
     background: #455a64;
 
-    color: #fff;
+    color: #ffffff;
 
     text-decoration: none;
 
@@ -797,7 +680,28 @@ body {
     font-weight: bold;
 
     border-radius: 3px;
+}
 
+
+/* =========================================================
+   ALERT
+========================================================= */
+
+.alert {
+
+    margin-bottom: 20px;
+
+    padding: 13px 15px;
+
+    background: #fbf1f1;
+
+    border:
+        1px solid
+        #e1c8c8;
+
+    color: #8b4b4b;
+
+    font-size: 10px;
 }
 
 
@@ -815,20 +719,18 @@ body {
     gap: 15px;
 
     margin-bottom: 25px;
-
 }
 
 
 .stat-card {
 
-    background: #fff;
+    background: #ffffff;
 
     border:
         1px solid
         #deddd8;
 
     padding: 19px;
-
 }
 
 
@@ -843,7 +745,6 @@ body {
     text-transform: uppercase;
 
     letter-spacing: .7px;
-
 }
 
 
@@ -856,7 +757,6 @@ body {
     font-size: 25px;
 
     font-weight: 600;
-
 }
 
 
@@ -867,7 +767,6 @@ body {
     color: #9aa2a5;
 
     font-size: 8px;
-
 }
 
 
@@ -877,7 +776,7 @@ body {
 
 .filter-panel {
 
-    background: #fff;
+    background: #ffffff;
 
     border:
         1px solid
@@ -886,7 +785,6 @@ body {
     padding: 20px;
 
     margin-bottom: 20px;
-
 }
 
 
@@ -901,7 +799,6 @@ body {
     font-weight: bold;
 
     text-transform: uppercase;
-
 }
 
 
@@ -916,7 +813,6 @@ body {
     gap: 10px;
 
     align-items: end;
-
 }
 
 
@@ -933,7 +829,6 @@ body {
     font-weight: bold;
 
     text-transform: uppercase;
-
 }
 
 
@@ -946,7 +841,7 @@ body {
     padding:
         0 10px;
 
-    background: #fff;
+    background: #ffffff;
 
     border:
         1px solid
@@ -957,15 +852,6 @@ body {
     font-size: 10px;
 
     outline: none;
-
-}
-
-
-.field select:focus {
-
-    border-color:
-        #78909c;
-
 }
 
 
@@ -980,7 +866,7 @@ body {
 
     background: #455a64;
 
-    color: #fff;
+    color: #ffffff;
 
     font-size: 9px;
 
@@ -989,7 +875,6 @@ body {
     cursor: pointer;
 
     border-radius: 3px;
-
 }
 
 
@@ -1012,29 +897,27 @@ body {
 
     color: #68757a;
 
-    background: #fff;
+    background: #ffffff;
 
     text-decoration: none;
 
     font-size: 9px;
 
     border-radius: 3px;
-
 }
 
 
 /* =========================================================
-   REPORT TABLE
+   REPORT PANEL
 ========================================================= */
 
 .panel {
 
-    background: #fff;
+    background: #ffffff;
 
     border:
         1px solid
         #deddd8;
-
 }
 
 
@@ -1052,7 +935,6 @@ body {
     align-items: center;
 
     justify-content: space-between;
-
 }
 
 
@@ -1065,7 +947,6 @@ body {
     font-size: 15px;
 
     font-weight: 600;
-
 }
 
 
@@ -1074,16 +955,18 @@ body {
     color: #8a9498;
 
     font-size: 9px;
-
 }
 
+
+/* =========================================================
+   TABLE
+========================================================= */
 
 .table-wrap {
 
     width: 100%;
 
     overflow-x: auto;
-
 }
 
 
@@ -1091,10 +974,9 @@ table {
 
     width: 100%;
 
-    min-width: 1050px;
+    min-width: 1200px;
 
     border-collapse: collapse;
-
 }
 
 
@@ -1122,7 +1004,6 @@ thead th {
     letter-spacing: .5px;
 
     white-space: nowrap;
-
 }
 
 
@@ -1140,14 +1021,11 @@ tbody td {
     font-size: 9px;
 
     vertical-align: middle;
-
 }
 
 
 tbody tr:hover {
-
     background: #fafaf8;
-
 }
 
 
@@ -1156,7 +1034,6 @@ tbody tr:hover {
     color: #37474f;
 
     font-weight: 600;
-
 }
 
 
@@ -1167,14 +1044,11 @@ tbody tr:hover {
     color: #9aa2a5;
 
     font-size: 7px;
-
 }
 
 
 .average {
-
     font-weight: 600;
-
 }
 
 
@@ -1196,7 +1070,6 @@ tbody tr:hover {
     text-transform: uppercase;
 
     letter-spacing: .4px;
-
 }
 
 
@@ -1205,7 +1078,6 @@ tbody tr:hover {
     background: #f3eee5;
 
     color: #806744;
-
 }
 
 
@@ -1214,7 +1086,6 @@ tbody tr:hover {
     background: #e9eef2;
 
     color: #506675;
-
 }
 
 
@@ -1223,7 +1094,6 @@ tbody tr:hover {
     background: #e8f1eb;
 
     color: #3e6b4e;
-
 }
 
 
@@ -1238,7 +1108,6 @@ tbody tr:hover {
     gap: 5px;
 
     flex-wrap: wrap;
-
 }
 
 
@@ -1256,7 +1125,19 @@ tbody tr:hover {
     font-weight: bold;
 
     border-radius: 3px;
+}
 
+
+.action-edit {
+
+    background: #455a64;
+
+    color: #ffffff;
+}
+
+
+.action-edit:hover {
+    background: #263238;
 }
 
 
@@ -1265,7 +1146,6 @@ tbody tr:hover {
     background: #eef0ef;
 
     color: #455a64;
-
 }
 
 
@@ -1274,7 +1154,6 @@ tbody tr:hover {
     background: #e9eef2;
 
     color: #506675;
-
 }
 
 
@@ -1283,7 +1162,14 @@ tbody tr:hover {
     background: #e8f1eb;
 
     color: #3e6b4e;
+}
 
+
+.action-official {
+
+    background: #edf2ee;
+
+    color: #52705c;
 }
 
 
@@ -1297,7 +1183,6 @@ tbody tr:hover {
         60px 20px;
 
     text-align: center;
-
 }
 
 
@@ -1322,7 +1207,6 @@ tbody tr:hover {
     justify-content: center;
 
     font-size: 22px;
-
 }
 
 
@@ -1333,7 +1217,6 @@ tbody tr:hover {
     color: #455a64;
 
     font-size: 15px;
-
 }
 
 
@@ -1349,30 +1232,6 @@ tbody tr:hover {
     font-size: 9px;
 
     line-height: 1.7;
-
-}
-
-
-/* =========================================================
-   ERROR
-========================================================= */
-
-.alert {
-
-    margin-bottom: 20px;
-
-    padding: 13px;
-
-    background: #fbf1f1;
-
-    border:
-        1px solid
-        #e1c8c8;
-
-    color: #8b4b4b;
-
-    font-size: 10px;
-
 }
 
 
@@ -1386,16 +1245,13 @@ tbody tr:hover {
 
         grid-template-columns:
             repeat(2, 1fr);
-
     }
 
     .filters {
 
         grid-template-columns:
             repeat(2, 1fr);
-
     }
-
 }
 
 
@@ -1410,7 +1266,6 @@ tbody tr:hover {
         height: auto;
 
         padding: 15px;
-
     }
 
     .brand {
@@ -1418,13 +1273,10 @@ tbody tr:hover {
         padding-bottom: 15px;
 
         margin-bottom: 12px;
-
     }
 
     .nav-title {
-
         display: none;
-
     }
 
     .nav-link {
@@ -1434,7 +1286,6 @@ tbody tr:hover {
         padding: 8px 9px;
 
         margin-right: 3px;
-
     }
 
     .sidebar-bottom {
@@ -1442,60 +1293,47 @@ tbody tr:hover {
         position: static;
 
         margin-top: 15px;
-
     }
 
     .main {
-
         margin-left: 0;
-
     }
 
     .topbar {
 
         padding:
             0 18px;
-
     }
 
     .content {
 
         padding:
             22px 15px;
-
     }
 
     .page-header {
 
         display: block;
-
     }
 
-    .view-all {
+    .dashboard-btn {
 
         display: inline-block;
 
         margin-top: 15px;
-
     }
-
 }
 
 
 @media(max-width:500px) {
 
     .stats {
-
         grid-template-columns: 1fr;
-
     }
 
     .filters {
-
         grid-template-columns: 1fr;
-
     }
-
 }
 
 </style>
@@ -1604,7 +1442,6 @@ tbody tr:hover {
 
     <header class="topbar">
 
-
         <div class="topbar-title">
             Reporting Control Centre
         </div>
@@ -1612,12 +1449,9 @@ tbody tr:hover {
 
         <div class="admin-name">
 
-            <?= h(
-                $adminName
-            ) ?>
+            <?= h($adminName) ?>
 
         </div>
-
 
     </header>
 
@@ -1639,8 +1473,8 @@ tbody tr:hover {
                 </h1>
 
                 <p>
-                    Manage, review and publish official
-                    HIBS student reports.
+                    Create, review, approve and publish
+                    official HIBS student reports.
                 </p>
 
             </div>
@@ -1648,7 +1482,7 @@ tbody tr:hover {
 
             <a
                 href="dashboard.php"
-                class="view-all"
+                class="dashboard-btn"
             >
                 ← Dashboard
             </a>
@@ -1657,15 +1491,11 @@ tbody tr:hover {
         </section>
 
 
-        <?php if (
-            $error !== ""
-        ): ?>
+        <?php if ($error !== ""): ?>
 
             <div class="alert">
 
-                <?= h(
-                    $error
-                ) ?>
+                <?= h($error) ?>
 
             </div>
 
@@ -1686,15 +1516,11 @@ tbody tr:hover {
                 </div>
 
                 <div class="stat-value">
-
-                    <?= number_format(
-                        $totalReports
-                    ) ?>
-
+                    <?= number_format($totalReports) ?>
                 </div>
 
                 <div class="stat-note">
-                    Reports matching current filters
+                    Current filtered reports
                 </div>
 
             </div>
@@ -1707,15 +1533,11 @@ tbody tr:hover {
                 </div>
 
                 <div class="stat-value">
-
-                    <?= number_format(
-                        $draftCount
-                    ) ?>
-
+                    <?= number_format($draftCount) ?>
                 </div>
 
                 <div class="stat-note">
-                    Reports requiring attention
+                    Reports being completed
                 </div>
 
             </div>
@@ -1728,11 +1550,7 @@ tbody tr:hover {
                 </div>
 
                 <div class="stat-value">
-
-                    <?= number_format(
-                        $approvedCount
-                    ) ?>
-
+                    <?= number_format($approvedCount) ?>
                 </div>
 
                 <div class="stat-note">
@@ -1749,15 +1567,11 @@ tbody tr:hover {
                 </div>
 
                 <div class="stat-value">
-
-                    <?= number_format(
-                        $publishedCount
-                    ) ?>
-
+                    <?= number_format($publishedCount) ?>
                 </div>
 
                 <div class="stat-note">
-                    Visible to students
+                    Visible in student portal
                 </div>
 
             </div>
@@ -1778,15 +1592,11 @@ tbody tr:hover {
             </div>
 
 
-            <form
-                method="GET"
-            >
+            <form method="GET">
 
 
                 <div class="filters">
 
-
-                    <!-- ACADEMIC YEAR -->
 
                     <div class="field">
 
@@ -1820,9 +1630,7 @@ tbody tr:hover {
                                 >
 
                                     <?= h(
-                                        $year[
-                                            "academic_year"
-                                        ]
+                                        $year["academic_year"]
                                     ) ?>
 
                                 </option>
@@ -1833,8 +1641,6 @@ tbody tr:hover {
 
                     </div>
 
-
-                    <!-- TERM -->
 
                     <div class="field">
 
@@ -1868,9 +1674,7 @@ tbody tr:hover {
                                 >
 
                                     <?= h(
-                                        $term[
-                                            "term_name"
-                                        ]
+                                        $term["term_name"]
                                     ) ?>
 
                                 </option>
@@ -1881,8 +1685,6 @@ tbody tr:hover {
 
                     </div>
 
-
-                    <!-- CLASS -->
 
                     <div class="field">
 
@@ -1916,9 +1718,7 @@ tbody tr:hover {
                                 >
 
                                     <?= h(
-                                        $class[
-                                            "class_name"
-                                        ]
+                                        $class["class_name"]
                                     ) ?>
 
                                 </option>
@@ -1929,8 +1729,6 @@ tbody tr:hover {
 
                     </div>
 
-
-                    <!-- STATUS -->
 
                     <div class="field">
 
@@ -1981,8 +1779,6 @@ tbody tr:hover {
                     </div>
 
 
-                    <!-- ACTIONS -->
-
                     <div
                         style="
                             display:flex;
@@ -2018,7 +1814,7 @@ tbody tr:hover {
 
 
         <!-- =================================================
-             REPORT TABLE
+             REPORT REGISTER
         ================================================== -->
 
         <section class="panel">
@@ -2026,11 +1822,9 @@ tbody tr:hover {
 
             <div class="panel-header">
 
-
                 <h2>
                     Report Register
                 </h2>
-
 
                 <div class="report-count">
 
@@ -2041,7 +1835,6 @@ tbody tr:hover {
                     report(s)
 
                 </div>
-
 
             </div>
 
@@ -2118,17 +1911,9 @@ tbody tr:hover {
                                     implode(
                                         " ",
                                         array_filter([
-                                            $report[
-                                                "first_name"
-                                            ] ?? "",
-
-                                            $report[
-                                                "middle_name"
-                                            ] ?? "",
-
-                                            $report[
-                                                "last_name"
-                                            ] ?? ""
+                                            $report["first_name"] ?? "",
+                                            $report["middle_name"] ?? "",
+                                            $report["last_name"] ?? ""
                                         ])
                                     )
                                 );
@@ -2146,16 +1931,14 @@ tbody tr:hover {
 
 
                             if (
-                                $status ===
-                                "Approved"
+                                $status === "Approved"
                             ) {
 
                                 $statusClass =
                                     "status-approved";
 
                             } elseif (
-                                $status ===
-                                "Published"
+                                $status === "Published"
                             ) {
 
                                 $statusClass =
@@ -2172,9 +1955,7 @@ tbody tr:hover {
 
                                 <td>
 
-                                    <div
-                                        class="student-name"
-                                    >
+                                    <div class="student-name">
 
                                         <?= h(
                                             $fullName
@@ -2182,10 +1963,7 @@ tbody tr:hover {
 
                                     </div>
 
-
-                                    <div
-                                        class="student-id"
-                                    >
+                                    <div class="student-id">
 
                                         ID:
                                         <?= h(
@@ -2242,28 +2020,26 @@ tbody tr:hover {
 
                                 <td>
 
-                                    <span
-                                        class="average"
-                                    >
+                                    <span class="average">
 
-                                    <?php if (
-                                        $report[
-                                            "average_score"
-                                        ] !== null
-                                    ): ?>
-
-                                        <?= number_format(
-                                            (float)$report[
+                                        <?php if (
+                                            $report[
                                                 "average_score"
-                                            ],
-                                            2
-                                        ) ?>%
+                                            ] !== null
+                                        ): ?>
 
-                                    <?php else: ?>
+                                            <?= number_format(
+                                                (float)$report[
+                                                    "average_score"
+                                                ],
+                                                2
+                                            ) ?>%
 
-                                        —
+                                        <?php else: ?>
 
-                                    <?php endif; ?>
+                                            —
+
+                                        <?php endif; ?>
 
                                     </span>
 
@@ -2365,26 +2141,41 @@ tbody tr:hover {
 
                                 <td>
 
-                                    <div
-                                        class="actions"
-                                    >
+                                    <div class="actions">
+
+
+                                        <!-- EDIT -->
+
+                                        <?php if (
+                                            $status !== "Published"
+                                        ): ?>
+
+                                            <a
+                                                href="report_details.php?id=<?= (int)$report["report_id"] ?>"
+                                                class="action action-edit"
+                                            >
+                                                Edit
+                                            </a>
+
+                                        <?php endif; ?>
 
 
                                         <!-- VIEW -->
 
                                         <a
                                             href="../student_report.php?student_id=<?= (int)$report["student_id"] ?>&class_id=<?= (int)$report["class_id"] ?>&term_id=<?= (int)$report["term_id"] ?>&preview=1"
+                                            class="action action-view"
                                             target="_blank"
                                             rel="noopener"
-                                            class="action action-view"
                                         >
                                             View
                                         </a>
 
 
+                                        <!-- APPROVE -->
+
                                         <?php if (
-                                            $status ===
-                                            "Draft"
+                                            $status === "Draft"
                                         ): ?>
 
                                             <a
@@ -2397,9 +2188,10 @@ tbody tr:hover {
                                         <?php endif; ?>
 
 
+                                        <!-- PUBLISH -->
+
                                         <?php if (
-                                            $status ===
-                                            "Approved"
+                                            $status === "Approved"
                                         ): ?>
 
                                             <a
@@ -2412,13 +2204,14 @@ tbody tr:hover {
                                         <?php endif; ?>
 
 
+                                        <!-- OFFICIAL -->
+
                                         <?php if (
-                                            $status ===
-                                            "Published"
+                                            $status === "Published"
                                         ): ?>
 
                                             <span
-                                                class="action action-view"
+                                                class="action action-official"
                                             >
                                                 Official
                                             </span>
@@ -2438,7 +2231,6 @@ tbody tr:hover {
 
 
                         </tbody>
-
 
                     </table>
 
@@ -2463,8 +2255,9 @@ tbody tr:hover {
 
 
                     <p>
-                        There are no report records matching
-                        the selected filters.
+                        No report records match the selected
+                        filters. Create a report record first,
+                        then it will appear here.
                     </p>
 
 
