@@ -7,8 +7,28 @@ require_once "../config/db.php";
 
 /*
 |--------------------------------------------------------------------------
-| HIBS REPORT CARDS
-| ADMIN ACCESS ONLY
+| HIBS REPORTS
+| REPORT CARD MANAGEMENT
+|--------------------------------------------------------------------------
+*/
+
+
+/*
+|--------------------------------------------------------------------------
+| ERROR REPORTING
+|--------------------------------------------------------------------------
+|
+| Do not display database errors to users.
+|
+*/
+
+ini_set("display_errors", "0");
+error_reporting(E_ALL);
+
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN AUTHENTICATION
 |--------------------------------------------------------------------------
 */
 
@@ -19,19 +39,6 @@ if (
     header("Location: ../login.php");
     exit;
 }
-
-
-/*
-|--------------------------------------------------------------------------
-| ERROR REPORTING
-|--------------------------------------------------------------------------
-|
-| Keep database errors out of the browser in production.
-|
-*/
-
-ini_set("display_errors", "0");
-error_reporting(E_ALL);
 
 
 /*
@@ -81,7 +88,34 @@ $messageType = "";
 
 /*
 |--------------------------------------------------------------------------
-| HANDLE FLASH MESSAGE FROM OTHER PAGES
+| SESSION FLASH MESSAGE
+|--------------------------------------------------------------------------
+*/
+
+if (
+    !empty(
+        $_SESSION["report_message"]
+    )
+) {
+
+    $message =
+        $_SESSION["report_message"];
+
+    $messageType =
+        $_SESSION["report_message_type"]
+        ?? "success";
+
+
+    unset(
+        $_SESSION["report_message"],
+        $_SESSION["report_message_type"]
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| URL SUCCESS MESSAGES
 |--------------------------------------------------------------------------
 */
 
@@ -113,7 +147,7 @@ if (
 
 /*
 |--------------------------------------------------------------------------
-| SELECTED FILTERS
+| SELECTED CLASS
 |--------------------------------------------------------------------------
 */
 
@@ -123,15 +157,21 @@ $class_id = filter_input(
     FILTER_VALIDATE_INT
 );
 
+$class_id =
+    $class_id ?: 0;
+
+
+/*
+|--------------------------------------------------------------------------
+| SELECTED TERM
+|--------------------------------------------------------------------------
+*/
+
 $term_id = filter_input(
     INPUT_GET,
     "term_id",
     FILTER_VALIDATE_INT
 );
-
-
-$class_id =
-    $class_id ?: 0;
 
 $term_id =
     $term_id ?: 0;
@@ -139,9 +179,11 @@ $term_id =
 
 /*
 |--------------------------------------------------------------------------
-| LOAD CLASSES
+| CLASSES
 |--------------------------------------------------------------------------
 */
+
+$classes = [];
 
 try {
 
@@ -163,8 +205,6 @@ try {
 
 } catch (PDOException $e) {
 
-    $classes = [];
-
     $message =
         "Unable to load classes.";
 
@@ -175,9 +215,11 @@ try {
 
 /*
 |--------------------------------------------------------------------------
-| LOAD TERMS
+| TERMS
 |--------------------------------------------------------------------------
 */
+
+$terms = [];
 
 try {
 
@@ -186,7 +228,6 @@ try {
             t.id,
             t.term_name,
             t.academic_year_id,
-
             ay.academic_year
 
         FROM terms t
@@ -196,7 +237,7 @@ try {
 
         ORDER BY
             ay.id DESC,
-            t.id DESC
+            t.id ASC
     ");
 
     $terms =
@@ -206,22 +247,17 @@ try {
 
 } catch (PDOException $e) {
 
-    $terms = [];
+    $message =
+        "Unable to load academic terms.";
 
-    if ($message === "") {
-
-        $message =
-            "Unable to load academic terms.";
-
-        $messageType =
-            "error";
-    }
+    $messageType =
+        "error";
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| SELECTED CLASS INFORMATION
+| SELECTED CLASS
 |--------------------------------------------------------------------------
 */
 
@@ -254,7 +290,7 @@ if ($class_id > 0) {
 
 /*
 |--------------------------------------------------------------------------
-| SELECTED TERM INFORMATION
+| SELECTED TERM
 |--------------------------------------------------------------------------
 */
 
@@ -292,32 +328,52 @@ if ($term_id > 0) {
 
 /*
 |--------------------------------------------------------------------------
-| STUDENT / REPORT DATA
+| STUDENTS
 |--------------------------------------------------------------------------
 */
 
 $students = [];
 
+
+/*
+|--------------------------------------------------------------------------
+| SUMMARY COUNTS
+|--------------------------------------------------------------------------
+*/
+
 $totalStudents = 0;
+$notStarted = 0;
 $draftReports = 0;
 $approvedReports = 0;
 $publishedReports = 0;
-$missingReports = 0;
 $completedReports = 0;
 
 
+/*
+|--------------------------------------------------------------------------
+| LOAD REPORT DATA
+|--------------------------------------------------------------------------
+*/
+
 if (
     $class_id > 0 &&
-    $term_id > 0
+    $term_id > 0 &&
+    $selectedClass &&
+    $selectedTerm
 ) {
 
-    /*
-    |--------------------------------------------------------------------------
-    | LOAD STUDENTS
-    |--------------------------------------------------------------------------
-    */
-
     try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | STUDENTS
+        |--------------------------------------------------------------------------
+        |
+        | We deliberately do not require a "status" column here.
+        | This makes the page compatible with the existing HIBS
+        | student table.
+        |
+        */
 
         $stmt = $conn->prepare("
             SELECT
@@ -333,15 +389,19 @@ if (
                 c.class_name,
 
                 r.id AS report_id,
+
                 r.report_status,
+
                 r.days_opened,
                 r.days_present,
                 r.days_absent,
+
                 r.conduct,
-                r.promotion_status,
 
                 r.teacher_comment,
                 r.headteacher_comment,
+
+                r.promotion_status,
 
                 r.approved_at,
                 r.published_at,
@@ -369,11 +429,6 @@ if (
             WHERE
                 s.class_id = ?
 
-                AND (
-                    s.status = 'Active'
-                    OR s.status IS NULL
-                )
-
             ORDER BY
                 s.last_name ASC,
                 s.first_name ASC
@@ -390,194 +445,237 @@ if (
                 PDO::FETCH_ASSOC
             );
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | PROCESS STUDENTS
+        |--------------------------------------------------------------------------
+        */
+
+        foreach (
+            $students
+            as &$student
+        ) {
+
+            $totalStudents++;
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | FULL NAME
+            |--------------------------------------------------------------------------
+            */
+
+            $nameParts = [];
+
+            if (
+                !empty(
+                    $student["first_name"]
+                )
+            ) {
+
+                $nameParts[] =
+                    $student["first_name"];
+            }
+
+
+            if (
+                !empty(
+                    $student["middle_name"]
+                )
+            ) {
+
+                $nameParts[] =
+                    $student["middle_name"];
+            }
+
+
+            if (
+                !empty(
+                    $student["last_name"]
+                )
+            ) {
+
+                $nameParts[] =
+                    $student["last_name"];
+            }
+
+
+            $student["full_name"] =
+                trim(
+                    implode(
+                        " ",
+                        $nameParts
+                    )
+                );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | REPORT STATUS
+            |--------------------------------------------------------------------------
+            */
+
+            $status =
+                $student["report_status"]
+                ?? null;
+
+
+            if (
+                !$student["report_id"]
+            ) {
+
+                $student["display_status"] =
+                    "Not Started";
+
+                $notStarted++;
+
+            } elseif (
+                $status === "Approved"
+            ) {
+
+                $student["display_status"] =
+                    "Approved";
+
+                $approvedReports++;
+
+            } elseif (
+                $status === "Published"
+            ) {
+
+                $student["display_status"] =
+                    "Published";
+
+                $publishedReports++;
+
+            } else {
+
+                $student["display_status"] =
+                    "Draft";
+
+                $draftReports++;
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | RESULT CHECK
+            |--------------------------------------------------------------------------
+            */
+
+            $student["has_result"] =
+                $student["average_score"] !== null;
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | REPORT DETAIL CHECK
+            |--------------------------------------------------------------------------
+            */
+
+            $student["has_details"] =
+                (
+                    $student["report_id"] !== null
+                    &&
+                    $student["days_opened"] !== null
+                    &&
+                    $student["days_present"] !== null
+                    &&
+                    trim(
+                        (string)(
+                            $student["conduct"]
+                            ?? ""
+                        )
+                    ) !== ""
+                    &&
+                    trim(
+                        (string)(
+                            $student["promotion_status"]
+                            ?? ""
+                        )
+                    ) !== ""
+                );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | COMPLETE REPORT
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                $student["has_result"]
+                &&
+                $student["has_details"]
+            ) {
+
+                $completedReports++;
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | ATTENDANCE
+            |--------------------------------------------------------------------------
+            */
+
+            $opened =
+                (int)(
+                    $student["days_opened"]
+                    ?? 0
+                );
+
+            $present =
+                (int)(
+                    $student["days_present"]
+                    ?? 0
+                );
+
+
+            if (
+                $opened > 0
+            ) {
+
+                $student["attendance_percentage"] =
+                    (
+                        $present /
+                        $opened
+                    ) * 100;
+
+            } else {
+
+                $student["attendance_percentage"] =
+                    0;
+            }
+        }
+
+        unset($student);
+
+
     } catch (PDOException $e) {
 
         $students = [];
 
         $message =
-            "Unable to load students and report information.";
+            "Unable to load the report card information.";
 
         $messageType =
             "error";
     }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | CALCULATE SUMMARY COUNTS
-    |--------------------------------------------------------------------------
-    */
-
-    foreach (
-        $students
-        as &$student
-    ) {
-
-        $totalStudents++;
-
-
-        $status =
-            $student["report_status"]
-            ?? "Draft";
-
-
-        if (
-            !$student["report_id"]
-        ) {
-
-            $missingReports++;
-
-        } elseif (
-            $status === "Draft"
-        ) {
-
-            $draftReports++;
-
-        } elseif (
-            $status === "Approved"
-        ) {
-
-            $approvedReports++;
-
-        } elseif (
-            $status === "Published"
-        ) {
-
-            $publishedReports++;
-        }
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | ACADEMIC RESULT CHECK
-        |--------------------------------------------------------------------------
-        */
-
-        $student["has_result"] =
-            $student["average_score"] !== null;
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | REPORT DETAILS CHECK
-        |--------------------------------------------------------------------------
-        */
-
-        $student["has_details"] =
-            !empty(
-                $student["conduct"]
-            )
-            &&
-            $student["days_opened"] !== null
-            &&
-            $student["promotion_status"] !== null;
-
-
-        if (
-            $student["has_result"] &&
-            $student["has_details"] &&
-            $student["report_id"]
-        ) {
-
-            $completedReports++;
-        }
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | ATTENDANCE %
-        |--------------------------------------------------------------------------
-        */
-
-        $opened =
-            (int)(
-                $student["days_opened"]
-                ?? 0
-            );
-
-        $present =
-            (int)(
-                $student["days_present"]
-                ?? 0
-            );
-
-
-        if ($opened > 0) {
-
-            $student["attendance_percentage"] =
-                (
-                    $present /
-                    $opened
-                ) * 100;
-
-        } else {
-
-            $student["attendance_percentage"] =
-                0;
-        }
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | DISPLAY NAME
-        |--------------------------------------------------------------------------
-        */
-
-        $nameParts = [];
-
-        if (
-            !empty(
-                $student["first_name"]
-            )
-        ) {
-
-            $nameParts[] =
-                $student["first_name"];
-        }
-
-        if (
-            !empty(
-                $student["middle_name"]
-            )
-        ) {
-
-            $nameParts[] =
-                $student["middle_name"];
-        }
-
-        if (
-            !empty(
-                $student["last_name"]
-            )
-        ) {
-
-            $nameParts[] =
-                $student["last_name"];
-        }
-
-
-        $student["full_name"] =
-            trim(
-                implode(
-                    " ",
-                    $nameParts
-                )
-            );
-    }
-
-    unset($student);
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| COMPLETION PERCENTAGE
+| COMPLETION
 |--------------------------------------------------------------------------
 */
 
 $completionPercentage = 0;
 
-if ($totalStudents > 0) {
+if (
+    $totalStudents > 0
+) {
 
     $completionPercentage =
         (
@@ -589,52 +687,27 @@ if ($totalStudents > 0) {
 
 /*
 |--------------------------------------------------------------------------
-| STATUS LABEL
+| STATUS CLASS
 |--------------------------------------------------------------------------
 */
 
-function reportStatusBadge(
-    ?string $status,
-    bool $hasReport
+function statusClass(
+    string $status
 ): string {
-
-    if (!$hasReport) {
-
-        return '
-            <span class="status-badge status-missing">
-                Not Started
-            </span>
-        ';
-    }
-
 
     switch ($status) {
 
         case "Approved":
-
-            return '
-                <span class="status-badge status-approved">
-                    Approved
-                </span>
-            ';
-
+            return "approved";
 
         case "Published":
+            return "published";
 
-            return '
-                <span class="status-badge status-published">
-                    Published
-                </span>
-            ';
-
+        case "Draft":
+            return "draft";
 
         default:
-
-            return '
-                <span class="status-badge status-draft">
-                    Draft
-                </span>
-            ';
+            return "missing";
     }
 }
 
@@ -671,11 +744,11 @@ function resultStatus(
 
 /*
 |--------------------------------------------------------------------------
-| REPORT DETAILS STATUS
+| DETAIL STATUS
 |--------------------------------------------------------------------------
 */
 
-function detailsStatus(
+function detailStatus(
     array $student
 ): string {
 
@@ -685,7 +758,7 @@ function detailsStatus(
 
         return '
             <span class="mini-status danger">
-                Details Missing
+                Not Started
             </span>
         ';
     }
@@ -757,42 +830,35 @@ function detailsStatus(
 ========================================================= */
 
 .report-page {
+    width: 100%;
     max-width: 1450px;
     margin: 0 auto;
 }
 
 
 /* =========================================================
-   FILTER
+   FILTER PANEL
 ========================================================= */
 
 .filter-panel {
     background: #fffdf9;
 
-    border: 1px solid #dfd6cc;
+    border: 1px solid #ded5cb;
 
     padding: 24px;
 
     margin-bottom: 22px;
 
     box-shadow:
-        0 5px 18px
-        rgba(40, 25, 20, .04);
+        0 4px 16px
+        rgba(50, 35, 30, .04);
 }
 
-.filter-panel-header {
-    display: flex;
-
-    justify-content: space-between;
-
-    align-items: flex-start;
-
-    gap: 15px;
-
+.filter-heading {
     margin-bottom: 20px;
 }
 
-.filter-panel-header h3 {
+.filter-heading h3 {
     margin: 0;
 
     color: #641c2b;
@@ -802,8 +868,8 @@ function detailsStatus(
     font-weight: normal;
 }
 
-.filter-panel-header p {
-    margin: 5px 0 0;
+.filter-heading p {
+    margin: 6px 0 0;
 
     color: #817873;
 
@@ -811,11 +877,6 @@ function detailsStatus(
 
     font-size: 11px;
 }
-
-
-/* =========================================================
-   FILTER FORM
-========================================================= */
 
 .filter-form {
     display: grid;
@@ -835,13 +896,13 @@ function detailsStatus(
 
     margin-bottom: 7px;
 
-    color: #6d625d;
+    color: #6f6560;
 
     font-family: Arial, sans-serif;
 
     font-size: 10px;
 
-    font-weight: 700;
+    font-weight: bold;
 
     text-transform: uppercase;
 
@@ -851,15 +912,15 @@ function detailsStatus(
 .filter-field select {
     width: 100%;
 
-    min-height: 44px;
+    height: 44px;
 
-    padding: 10px 12px;
+    padding: 8px 12px;
 
-    border: 1px solid #d8cfc5;
+    border: 1px solid #d7cec5;
 
-    background: #fff;
+    background: #ffffff;
 
-    color: #30282a;
+    color: #332c2d;
 
     font-family: Arial, sans-serif;
 
@@ -889,9 +950,9 @@ function detailsStatus(
 }
 
 .summary-card {
-    background: #fff;
+    background: #ffffff;
 
-    border: 1px solid #dfd6cc;
+    border: 1px solid #ded5cb;
 
     padding: 18px;
 
@@ -905,18 +966,18 @@ function detailsStatus(
 
     position: absolute;
 
-    width: 65px;
-    height: 65px;
+    width: 70px;
+    height: 70px;
 
-    right: -22px;
-    top: -22px;
+    top: -30px;
+    right: -25px;
 
     border-radius: 50%;
 
-    background: #f5eee5;
+    background: #f4ede5;
 }
 
-.summary-card-label {
+.summary-label {
     display: block;
 
     color: #817873;
@@ -925,14 +986,20 @@ function detailsStatus(
 
     font-size: 9px;
 
+    font-weight: bold;
+
     text-transform: uppercase;
 
     letter-spacing: .8px;
 
     margin-bottom: 8px;
+
+    position: relative;
+
+    z-index: 1;
 }
 
-.summary-card-number {
+.summary-number {
     color: #641c2b;
 
     font-size: 26px;
@@ -944,42 +1011,48 @@ function detailsStatus(
     z-index: 1;
 }
 
-.summary-card-sub {
+.summary-description {
+    margin-top: 5px;
+
     color: #817873;
 
     font-family: Arial, sans-serif;
 
     font-size: 10px;
 
-    margin-top: 5px;
+    position: relative;
+
+    z-index: 1;
 }
 
 
 /* =========================================================
-   COMPLETION
+   COMPLETION BAR
 ========================================================= */
 
 .completion-panel {
-    background: #fff;
+    background: #ffffff;
 
-    border: 1px solid #dfd6cc;
+    border: 1px solid #ded5cb;
 
     padding: 18px;
 
     margin-bottom: 22px;
 }
 
-.completion-top {
+.completion-header {
     display: flex;
 
     justify-content: space-between;
+
+    align-items: center;
 
     gap: 10px;
 
     margin-bottom: 9px;
 }
 
-.completion-top strong {
+.completion-header strong {
     color: #641c2b;
 
     font-family: Arial, sans-serif;
@@ -987,7 +1060,7 @@ function detailsStatus(
     font-size: 12px;
 }
 
-.completion-top span {
+.completion-header span {
     color: #817873;
 
     font-family: Arial, sans-serif;
@@ -996,9 +1069,11 @@ function detailsStatus(
 }
 
 .progress {
+    width: 100%;
+
     height: 9px;
 
-    background: #eee8e1;
+    background: #eee7df;
 
     overflow: hidden;
 }
@@ -1013,21 +1088,21 @@ function detailsStatus(
 
 
 /* =========================================================
-   REPORT AREA
+   REPORT PANEL
 ========================================================= */
 
-.reports-panel {
-    background: #fff;
+.report-panel {
+    background: #ffffff;
 
-    border: 1px solid #dfd6cc;
+    border: 1px solid #ded5cb;
 
     overflow: hidden;
 }
 
-.reports-header {
+.report-panel-header {
     padding: 20px 22px;
 
-    border-bottom: 1px solid #e7e0d9;
+    border-bottom: 1px solid #e8e1da;
 
     display: flex;
 
@@ -1038,7 +1113,7 @@ function detailsStatus(
     gap: 15px;
 }
 
-.reports-header h3 {
+.report-panel-header h3 {
     margin: 0;
 
     color: #641c2b;
@@ -1048,7 +1123,7 @@ function detailsStatus(
     font-weight: normal;
 }
 
-.reports-header p {
+.report-panel-header p {
     margin: 5px 0 0;
 
     color: #817873;
@@ -1063,46 +1138,43 @@ function detailsStatus(
    TABLE
 ========================================================= */
 
-.table-scroll {
+.table-container {
     width: 100%;
 
     overflow-x: auto;
 }
 
-.reports-table {
+.report-table {
     width: 100%;
 
-    min-width: 1250px;
+    min-width: 1300px;
 
     border-collapse: collapse;
 }
 
-.reports-table th {
+.report-table th {
     padding: 12px 10px;
 
     background: #641c2b;
 
-    color: #fff;
-
-    border-right: 1px solid
-        rgba(255,255,255,.15);
+    color: #ffffff;
 
     font-family: Arial, sans-serif;
 
     font-size: 9px;
 
-    font-weight: 700;
+    font-weight: bold;
 
     text-transform: uppercase;
 
-    letter-spacing: .6px;
+    letter-spacing: .5px;
 
     text-align: left;
 
     white-space: nowrap;
 }
 
-.reports-table td {
+.report-table td {
     padding: 12px 10px;
 
     border-bottom: 1px solid #eee8e1;
@@ -1116,9 +1188,14 @@ function detailsStatus(
     vertical-align: middle;
 }
 
-.reports-table tbody tr:hover td {
+.report-table tbody tr:hover td {
     background: #fcfaf7;
 }
+
+
+/* =========================================================
+   STUDENT
+========================================================= */
 
 .student-cell {
     display: flex;
@@ -1127,25 +1204,25 @@ function detailsStatus(
 
     gap: 10px;
 
-    min-width: 220px;
+    min-width: 230px;
 }
 
 .student-photo {
-    width: 42px;
-    height: 48px;
+    width: 43px;
+    height: 51px;
 
     object-fit: cover;
 
     border: 1px solid #641c2b;
 
-    background: #f4eee7;
+    background: #f4eee8;
+
+    flex-shrink: 0;
 }
 
-.student-photo-placeholder {
-    width: 42px;
-    height: 48px;
-
-    border: 1px solid #641c2b;
+.no-photo {
+    width: 43px;
+    height: 51px;
 
     display: flex;
 
@@ -1153,17 +1230,23 @@ function detailsStatus(
 
     justify-content: center;
 
-    background: #f4eee7;
+    border: 1px solid #641c2b;
 
-    color: #8b817b;
+    background: #f4eee8;
 
-    font-size: 8px;
+    color: #817873;
+
+    font-size: 7px;
+
+    text-align: center;
+
+    flex-shrink: 0;
 }
 
 .student-name {
     color: #3c292d;
 
-    font-weight: 700;
+    font-weight: bold;
 
     line-height: 1.4;
 }
@@ -1173,7 +1256,7 @@ function detailsStatus(
 
     margin-top: 2px;
 
-    color: #8b817b;
+    color: #817873;
 
     font-size: 9px;
 
@@ -1182,7 +1265,7 @@ function detailsStatus(
 
 
 /* =========================================================
-   STATUS BADGES
+   STATUS
 ========================================================= */
 
 .status-badge {
@@ -1194,7 +1277,7 @@ function detailsStatus(
 
     font-size: 8px;
 
-    font-weight: 700;
+    font-weight: bold;
 
     text-transform: uppercase;
 
@@ -1204,27 +1287,27 @@ function detailsStatus(
 }
 
 .status-missing {
-    background: #f5e8e6;
+    background: #f5e7e5;
 
-    color: #8c3028;
+    color: #91382f;
 }
 
 .status-draft {
-    background: #eeeae5;
+    background: #ece8e4;
 
-    color: #645b56;
+    color: #665d58;
 }
 
 .status-approved {
-    background: #f4ecd9;
+    background: #f4ecd8;
 
-    color: #755a1e;
+    color: #775c1f;
 }
 
 .status-published {
-    background: #e5eee8;
+    background: #e4eee7;
 
-    color: #315f42;
+    color: #315e40;
 }
 
 
@@ -1235,17 +1318,19 @@ function detailsStatus(
 .mini-status {
     display: inline-block;
 
-    margin-top: 4px;
+    font-family: Arial, sans-serif;
 
     font-size: 8px;
 
-    font-weight: 700;
+    font-weight: bold;
 
     text-transform: uppercase;
+
+    white-space: nowrap;
 }
 
 .mini-status.success {
-    color: #35734a;
+    color: #337248;
 }
 
 .mini-status.warning {
@@ -1266,13 +1351,17 @@ function detailsStatus(
 
     font-size: 14px;
 
-    font-weight: 700;
+    font-weight: bold;
 }
 
 .position {
     color: #3f3033;
 
-    font-weight: 700;
+    font-weight: bold;
+}
+
+.muted {
+    color: #99908a;
 }
 
 
@@ -1280,17 +1369,25 @@ function detailsStatus(
    ACTIONS
 ========================================================= */
 
-.student-actions {
+.action-container {
     display: flex;
 
     flex-wrap: wrap;
 
+    align-items: center;
+
     gap: 5px;
 
-    min-width: 250px;
+    min-width: 300px;
 }
 
-.student-actions .btn {
+.action-container form {
+    display: inline;
+    margin: 0;
+    padding: 0;
+}
+
+.action-container .btn {
     padding: 7px 9px;
 
     font-size: 9px;
@@ -1300,16 +1397,16 @@ function detailsStatus(
 
 
 /* =========================================================
-   EMPTY STATE
+   EMPTY
 ========================================================= */
 
 .empty-state {
-    padding: 65px 25px;
+    padding: 70px 25px;
 
     text-align: center;
 }
 
-.empty-state-icon {
+.empty-icon {
     font-size: 42px;
 
     margin-bottom: 12px;
@@ -1324,7 +1421,7 @@ function detailsStatus(
 }
 
 .empty-state p {
-    max-width: 480px;
+    max-width: 500px;
 
     margin: 8px auto 0;
 
@@ -1339,27 +1436,55 @@ function detailsStatus(
 
 
 /* =========================================================
-   QUICK ACTIONS
+   HEADER ACTION
 ========================================================= */
 
-.quick-actions {
+.header-actions {
     display: flex;
 
     flex-wrap: wrap;
 
-    gap: 8px;
-}
-
-.quick-actions .btn {
-    padding: 9px 12px;
+    gap: 7px;
 }
 
 
 /* =========================================================
-   MOBILE
+   PRINT
 ========================================================= */
 
-@media(max-width: 1050px) {
+@media print {
+
+    .hibs-header,
+    .hibs-nav,
+    .filter-panel,
+    .summary-grid,
+    .completion-panel,
+    .header-actions,
+    .action-container {
+        display: none !important;
+    }
+
+    .page {
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    .report-panel {
+        border: none;
+    }
+
+    .report-table {
+        min-width: 0;
+    }
+
+}
+
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media(max-width: 1100px) {
 
     .summary-grid {
         grid-template-columns:
@@ -1379,8 +1504,7 @@ function detailsStatus(
             repeat(2, 1fr);
     }
 
-    .filter-panel-header,
-    .reports-header {
+    .report-panel-header {
         flex-direction: column;
 
         align-items: flex-start;
@@ -1388,41 +1512,10 @@ function detailsStatus(
 
 }
 
-@media(max-width: 520px) {
+@media(max-width: 500px) {
 
     .summary-grid {
         grid-template-columns: 1fr;
-    }
-
-}
-
-
-/* =========================================================
-   PRINT
-========================================================= */
-
-@media print {
-
-    .hibs-header,
-    .hibs-nav,
-    .filter-panel,
-    .summary-grid,
-    .completion-panel,
-    .reports-header .quick-actions {
-        display: none !important;
-    }
-
-    .page {
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-
-    .reports-panel {
-        border: none;
-    }
-
-    .reports-table {
-        min-width: 0;
     }
 
 }
@@ -1573,7 +1666,7 @@ function detailsStatus(
 
 
     <!-- =================================================
-         PAGE HEADING
+         PAGE TITLE
     ================================================== -->
 
     <div class="page-heading">
@@ -1595,10 +1688,12 @@ function detailsStatus(
 
 
     <!-- =================================================
-         FLASH MESSAGE
+         MESSAGE
     ================================================== -->
 
-    <?php if ($message !== ""): ?>
+    <?php if (
+        $message !== ""
+    ): ?>
 
         <div
             class="alert
@@ -1615,25 +1710,21 @@ function detailsStatus(
 
 
     <!-- =================================================
-         FILTER PANEL
+         FILTER
     ================================================== -->
 
     <section class="filter-panel">
 
-        <div class="filter-panel-header">
+        <div class="filter-heading">
 
-            <div>
+            <h3>
+                Select Reporting Period
+            </h3>
 
-                <h3>
-                    Select Reporting Period
-                </h3>
-
-                <p>
-                    Select a class and academic term
-                    to manage student reports.
-                </p>
-
-            </div>
+            <p>
+                Select a class and academic term
+                to manage the student report cards.
+            </p>
 
         </div>
 
@@ -1660,6 +1751,7 @@ function detailsStatus(
                     <option value="">
                         Select Class
                     </option>
+
 
                     <?php foreach (
                         $classes
@@ -1704,6 +1796,7 @@ function detailsStatus(
                         Select Academic Term
                     </option>
 
+
                     <?php foreach (
                         $terms
                         as $term
@@ -1736,7 +1829,7 @@ function detailsStatus(
             </div>
 
 
-            <!-- SUBMIT -->
+            <!-- LOAD -->
 
             <button
                 type="submit"
@@ -1752,37 +1845,36 @@ function detailsStatus(
 
     <?php if (
         $class_id > 0 &&
-        $term_id > 0
+        $term_id > 0 &&
+        $selectedClass &&
+        $selectedTerm
     ): ?>
 
 
-        <!-- =============================================
-             SELECTED PERIOD
-        ============================================== -->
+        <!-- =================================================
+             COMPLETION
+        ================================================== -->
 
-        <div class="completion-panel">
+        <section class="completion-panel">
 
-            <div class="completion-top">
+            <div class="completion-header">
 
                 <strong>
 
                     <?= h(
                         $selectedClass["class_name"]
-                        ?? "Selected Class"
                     ) ?>
 
                     &nbsp;·&nbsp;
 
                     <?= h(
                         $selectedTerm["academic_year"]
-                        ?? ""
                     ) ?>
 
                     &nbsp;·&nbsp;
 
                     <?= h(
                         $selectedTerm["term_name"]
-                        ?? ""
                     ) ?>
 
                 </strong>
@@ -1820,30 +1912,30 @@ function detailsStatus(
 
             </div>
 
-        </div>
+        </section>
 
 
-        <!-- =============================================
-             SUMMARY CARDS
-        ============================================== -->
+        <!-- =================================================
+             SUMMARY
+        ================================================== -->
 
         <section class="summary-grid">
 
 
             <div class="summary-card">
 
-                <span class="summary-card-label">
+                <span class="summary-label">
                     Students
                 </span>
 
-                <div class="summary-card-number">
+                <div class="summary-number">
                     <?= number_format(
                         $totalStudents
                     ) ?>
                 </div>
 
-                <div class="summary-card-sub">
-                    Active students
+                <div class="summary-description">
+                    Students in class
                 </div>
 
             </div>
@@ -1851,17 +1943,36 @@ function detailsStatus(
 
             <div class="summary-card">
 
-                <span class="summary-card-label">
+                <span class="summary-label">
+                    Not Started
+                </span>
+
+                <div class="summary-number">
+                    <?= number_format(
+                        $notStarted
+                    ) ?>
+                </div>
+
+                <div class="summary-description">
+                    No report record
+                </div>
+
+            </div>
+
+
+            <div class="summary-card">
+
+                <span class="summary-label">
                     Draft
                 </span>
 
-                <div class="summary-card-number">
+                <div class="summary-number">
                     <?= number_format(
                         $draftReports
                     ) ?>
                 </div>
 
-                <div class="summary-card-sub">
+                <div class="summary-description">
                     Reports requiring review
                 </div>
 
@@ -1870,18 +1981,18 @@ function detailsStatus(
 
             <div class="summary-card">
 
-                <span class="summary-card-label">
+                <span class="summary-label">
                     Approved
                 </span>
 
-                <div class="summary-card-number">
+                <div class="summary-number">
                     <?= number_format(
                         $approvedReports
                     ) ?>
                 </div>
 
-                <div class="summary-card-sub">
-                    Ready for publication
+                <div class="summary-description">
+                    Ready to publish
                 </div>
 
             </div>
@@ -1889,37 +2000,18 @@ function detailsStatus(
 
             <div class="summary-card">
 
-                <span class="summary-card-label">
+                <span class="summary-label">
                     Published
                 </span>
 
-                <div class="summary-card-number">
+                <div class="summary-number">
                     <?= number_format(
                         $publishedReports
                     ) ?>
                 </div>
 
-                <div class="summary-card-sub">
+                <div class="summary-description">
                     Official reports
-                </div>
-
-            </div>
-
-
-            <div class="summary-card">
-
-                <span class="summary-card-label">
-                    Not Started
-                </span>
-
-                <div class="summary-card-number">
-                    <?= number_format(
-                        $missingReports
-                    ) ?>
-                </div>
-
-                <div class="summary-card-sub">
-                    No report record
                 </div>
 
             </div>
@@ -1927,38 +2019,37 @@ function detailsStatus(
         </section>
 
 
-        <!-- =============================================
+        <!-- =================================================
              REPORT TABLE
-        ============================================== -->
+        ================================================== -->
 
-        <section class="reports-panel">
+        <section class="report-panel">
 
 
-            <div class="reports-header">
+            <div class="report-panel-header">
 
                 <div>
 
                     <h3>
+
                         <?= h(
                             $selectedClass["class_name"]
-                            ?? "Class"
                         ) ?>
 
-                        — Student Reports
+                        — Report Cards
+
                     </h3>
 
                     <p>
 
                         <?= h(
                             $selectedTerm["academic_year"]
-                            ?? ""
                         ) ?>
 
-                        ·
+                        &nbsp;·&nbsp;
 
                         <?= h(
                             $selectedTerm["term_name"]
-                            ?? ""
                         ) ?>
 
                     </p>
@@ -1966,7 +2057,7 @@ function detailsStatus(
                 </div>
 
 
-                <div class="quick-actions">
+                <div class="header-actions">
 
                     <button
                         type="button"
@@ -1985,9 +2076,11 @@ function detailsStatus(
                 count($students) > 0
             ): ?>
 
-                <div class="table-scroll">
 
-                    <table class="reports-table">
+                <div class="table-container">
+
+                    <table class="report-table">
+
 
                         <thead>
 
@@ -2039,7 +2132,7 @@ function detailsStatus(
 
                         <?php
 
-                        $number = 1;
+                        $counter = 1;
 
                         ?>
 
@@ -2057,7 +2150,7 @@ function detailsStatus(
 
                                 <td>
 
-                                    <?= $number++ ?>
+                                    <?= $counter++ ?>
 
                                 </td>
 
@@ -2082,13 +2175,13 @@ function detailsStatus(
                                                     $student["photo"]
                                                 ) ?>"
                                                 class="student-photo"
-                                                alt="Student photo"
+                                                alt="Student photograph"
                                             >
 
                                         <?php else: ?>
 
                                             <div
-                                                class="student-photo-placeholder"
+                                                class="no-photo"
                                             >
                                                 NO PHOTO
                                             </div>
@@ -2139,7 +2232,9 @@ function detailsStatus(
                                         >
 
                                             <?= number_format(
-                                                (float)$student["average_score"],
+                                                (float)$student[
+                                                    "average_score"
+                                                ],
                                                 2
                                             ) ?>%
 
@@ -2148,7 +2243,7 @@ function detailsStatus(
                                     <?php else: ?>
 
                                         <span
-                                            class="mini-status danger"
+                                            class="muted"
                                         >
                                             —
                                         </span>
@@ -2176,6 +2271,7 @@ function detailsStatus(
                                             ) ?>
 
                                             /
+
                                             <?= (int)(
                                                 $student["class_size"]
                                             ) ?>
@@ -2184,7 +2280,11 @@ function detailsStatus(
 
                                     <?php else: ?>
 
-                                        —
+                                        <span
+                                            class="muted"
+                                        >
+                                            —
+                                        </span>
 
                                     <?php endif; ?>
 
@@ -2200,7 +2300,7 @@ function detailsStatus(
                                     ): ?>
 
                                         <?= number_format(
-                                            $student[
+                                            (float)$student[
                                                 "attendance_percentage"
                                             ],
                                             1
@@ -2208,7 +2308,11 @@ function detailsStatus(
 
                                     <?php else: ?>
 
-                                        —
+                                        <span
+                                            class="muted"
+                                        >
+                                            —
+                                        </span>
 
                                     <?php endif; ?>
 
@@ -2226,29 +2330,43 @@ function detailsStatus(
                                 </td>
 
 
-                                <!-- DETAILS -->
+                                <!-- REPORT DETAILS -->
 
                                 <td>
 
-                                    <?= detailsStatus(
+                                    <?= detailStatus(
                                         $student
                                     ) ?>
 
                                 </td>
 
 
-                                <!-- REPORT STATUS -->
+                                <!-- STATUS -->
 
                                 <td>
 
-                                    <?= reportStatusBadge(
-                                        $student[
-                                            "report_status"
-                                        ],
-                                        !empty(
-                                            $student["report_id"]
-                                        )
-                                    ) ?>
+                                    <span
+                                        class="
+                                            status-badge
+                                            status-<?=
+                                                h(
+                                                    statusClass(
+                                                        $student[
+                                                            "display_status"
+                                                        ]
+                                                    )
+                                                )
+                                            ?>
+                                        "
+                                    >
+
+                                        <?= h(
+                                            $student[
+                                                "display_status"
+                                            ]
+                                        ) ?>
+
+                                    </span>
 
                                 </td>
 
@@ -2258,24 +2376,24 @@ function detailsStatus(
                                 <td>
 
                                     <div
-                                        class="student-actions"
+                                        class="action-container"
                                     >
 
 
                                         <!-- EDIT DETAILS -->
 
                                         <a
-                                            href="report_details.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
+                                            href="report_details.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= (int)$class_id ?>&term_id=<?= (int)$term_id ?>"
                                             class="btn btn-light"
                                         >
                                             Edit Details
                                         </a>
 
 
-                                        <!-- VIEW -->
+                                        <!-- VIEW REPORT -->
 
                                         <a
-                                            href="../student_report.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
+                                            href="../student_report.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= (int)$class_id ?>&term_id=<?= (int)$term_id ?>"
                                             class="btn btn-primary"
                                             target="_blank"
                                             rel="noopener"
@@ -2287,7 +2405,7 @@ function detailsStatus(
                                         <!-- PRINT -->
 
                                         <a
-                                            href="../student_report.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>&print=1"
+                                            href="../student_report.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= (int)$class_id ?>&term_id=<?= (int)$term_id ?>&print=1"
                                             class="btn btn-gold"
                                             target="_blank"
                                             rel="noopener"
@@ -2300,7 +2418,7 @@ function detailsStatus(
                                             !$student["report_id"]
                                             ||
                                             $student[
-                                                "report_status"
+                                                "display_status"
                                             ] === "Draft"
                                         ): ?>
 
@@ -2309,43 +2427,111 @@ function detailsStatus(
 
                                             <?php if (
                                                 $student["has_result"]
+                                                &&
+                                                $student["has_details"]
                                             ): ?>
 
-                                                <a
-                                                    href="approve_report.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
-                                                    class="btn btn-primary"
-                                                    onclick="
+                                                <form
+                                                    method="POST"
+                                                    action="approve_report.php"
+                                                    onsubmit="
                                                         return confirm(
                                                             'Approve this report?'
                                                         );
                                                     "
                                                 >
-                                                    Approve
-                                                </a>
+
+                                                    <input
+                                                        type="hidden"
+                                                        name="csrf_token"
+                                                        value="<?= h(
+                                                            $csrfToken
+                                                        ) ?>"
+                                                    >
+
+                                                    <input
+                                                        type="hidden"
+                                                        name="student_id"
+                                                        value="<?= (int)$student["id"] ?>"
+                                                    >
+
+                                                    <input
+                                                        type="hidden"
+                                                        name="class_id"
+                                                        value="<?= (int)$class_id ?>"
+                                                    >
+
+                                                    <input
+                                                        type="hidden"
+                                                        name="term_id"
+                                                        value="<?= (int)$term_id ?>"
+                                                    >
+
+                                                    <button
+                                                        type="submit"
+                                                        class="btn btn-primary"
+                                                    >
+                                                        Approve
+                                                    </button>
+
+                                                </form>
 
                                             <?php endif; ?>
 
 
                                         <?php elseif (
                                             $student[
-                                                "report_status"
+                                                "display_status"
                                             ] === "Approved"
                                         ): ?>
 
 
                                             <!-- PUBLISH -->
 
-                                            <a
-                                                href="publish_report.php?student_id=<?= (int)$student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
-                                                class="btn btn-gold"
-                                                onclick="
+                                            <form
+                                                method="POST"
+                                                action="publish_report.php"
+                                                onsubmit="
                                                     return confirm(
-                                                        'Publish this report? Published reports should no longer be edited.'
+                                                        'Publish this report? Once published, it becomes an official HIBS report.'
                                                     );
                                                 "
                                             >
-                                                Publish
-                                            </a>
+
+                                                <input
+                                                    type="hidden"
+                                                    name="csrf_token"
+                                                    value="<?= h(
+                                                        $csrfToken
+                                                    ) ?>"
+                                                >
+
+                                                <input
+                                                    type="hidden"
+                                                    name="student_id"
+                                                    value="<?= (int)$student["id"] ?>"
+                                                >
+
+                                                <input
+                                                    type="hidden"
+                                                    name="class_id"
+                                                    value="<?= (int)$class_id ?>"
+                                                >
+
+                                                <input
+                                                    type="hidden"
+                                                    name="term_id"
+                                                    value="<?= (int)$term_id ?>"
+                                                >
+
+                                                <button
+                                                    type="submit"
+                                                    class="btn btn-gold"
+                                                >
+                                                    Publish
+                                                </button>
+
+                                            </form>
 
 
                                         <?php else: ?>
@@ -2354,12 +2540,13 @@ function detailsStatus(
                                             <!-- PUBLISHED -->
 
                                             <span
-                                                class="mini-status success"
+                                                class="
+                                                    mini-status
+                                                    success
+                                                "
                                             >
                                                 Official
-
                                             </span>
-
 
                                         <?php endif; ?>
 
@@ -2387,7 +2574,7 @@ function detailsStatus(
 
                 <div class="empty-state">
 
-                    <div class="empty-state-icon">
+                    <div class="empty-icon">
                         📄
                     </div>
 
@@ -2396,8 +2583,8 @@ function detailsStatus(
                     </h3>
 
                     <p>
-                        There are no active students
-                        assigned to this class.
+                        No students were found in the
+                        selected class.
                     </p>
 
                 </div>
@@ -2412,15 +2599,15 @@ function detailsStatus(
     <?php else: ?>
 
 
-        <!-- =============================================
+        <!-- =================================================
              INITIAL STATE
-        ============================================== -->
+        ================================================== -->
 
-        <section class="reports-panel">
+        <section class="report-panel">
 
             <div class="empty-state">
 
-                <div class="empty-state-icon">
+                <div class="empty-icon">
                     📚
                 </div>
 
@@ -2429,7 +2616,7 @@ function detailsStatus(
                 </h3>
 
                 <p>
-                    Choose the academic class and term
+                    Choose the class and academic term
                     above to load the students and manage
                     their HIBS report cards.
                 </p>
