@@ -7,915 +7,1014 @@ require_once "../config/db.php";
 
 /*
 |--------------------------------------------------------------------------
-| AUTHENTICATION
+| HIBS REPORTING SYSTEM
+| ADMIN REPORT DETAILS
+|--------------------------------------------------------------------------
+*/
+
+ini_set("display_errors", "0");
+error_reporting(E_ALL);
+
+
+/*
+|--------------------------------------------------------------------------
+| HELPER
+|--------------------------------------------------------------------------
+*/
+
+function h($value): string
+{
+    return htmlspecialchars(
+        (string)$value,
+        ENT_QUOTES,
+        "UTF-8"
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN SECURITY
 |--------------------------------------------------------------------------
 */
 
 if (
     !isset($_SESSION["user_id"]) ||
-    $_SESSION["role"] !== "admin"
+    ($_SESSION["role"] ?? "") !== "admin"
 ) {
-    header("Location: ../login.php");
+
+    header(
+        "Location: ../login.php"
+    );
+
     exit;
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| CSRF TOKEN
+| REPORT ID
 |--------------------------------------------------------------------------
 */
 
-if (empty($_SESSION["csrf_token"])) {
-    $_SESSION["csrf_token"] = bin2hex(
-        random_bytes(32)
+$reportId =
+    filter_input(
+        INPUT_GET,
+        "id",
+        FILTER_VALIDATE_INT
     );
-}
-
-$csrfToken = $_SESSION["csrf_token"];
 
 
-/*
-|--------------------------------------------------------------------------
-| PARAMETERS
-|--------------------------------------------------------------------------
-*/
+if (!$reportId) {
 
-$student_id = filter_input(
-    INPUT_GET,
-    "student_id",
-    FILTER_VALIDATE_INT
-);
+    header(
+        "Location: reports.php"
+    );
 
-$class_id = filter_input(
-    INPUT_GET,
-    "class_id",
-    FILTER_VALIDATE_INT
-);
-
-$term_id = filter_input(
-    INPUT_GET,
-    "term_id",
-    FILTER_VALIDATE_INT
-);
-
-
-if (
-    !$student_id ||
-    !$class_id ||
-    !$term_id
-) {
-    die("Invalid report information.");
+    exit;
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| LOAD STUDENT
+| VARIABLES
 |--------------------------------------------------------------------------
 */
 
-$stmt = $conn->prepare("
-    SELECT
-        s.id,
-        s.student_id,
-        s.first_name,
-        s.middle_name,
-        s.last_name,
-        s.gender,
-        s.photo,
+$report = null;
 
-        c.id AS class_id,
-        c.class_name
+$subjects = [];
 
-    FROM students s
+$results = [];
 
-    INNER JOIN classes c
-        ON c.id = s.class_id
+$error = "";
 
-    WHERE
-        s.id = ?
-        AND s.class_id = ?
-
-    LIMIT 1
-");
-
-$stmt->execute([
-    $student_id,
-    $class_id
-]);
-
-$student = $stmt->fetch(PDO::FETCH_ASSOC);
-
-
-if (!$student) {
-    die("Student not found.");
-}
+$success = "";
 
 
 /*
 |--------------------------------------------------------------------------
-| LOAD TERM
+| LOAD REPORT
 |--------------------------------------------------------------------------
 */
-
-$stmt = $conn->prepare("
-    SELECT
-        t.id,
-        t.term_name,
-        t.academic_year_id,
-
-        ay.academic_year
-
-    FROM terms t
-
-    INNER JOIN academic_years ay
-        ON ay.id = t.academic_year_id
-
-    WHERE t.id = ?
-
-    LIMIT 1
-");
-
-$stmt->execute([
-    $term_id
-]);
-
-$term = $stmt->fetch(PDO::FETCH_ASSOC);
-
-
-if (!$term) {
-    die("Term not found.");
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| LOAD SCHOOL SETTINGS
-|--------------------------------------------------------------------------
-*/
-
-$school = null;
 
 try {
 
-    $stmt = $conn->query("
-        SELECT *
-        FROM school_settings
-        ORDER BY id ASC
+    /*
+    |--------------------------------------------------------------------------
+    | REPORT
+    |--------------------------------------------------------------------------
+    */
+
+    $stmt = $conn->prepare("
+        SELECT
+
+            r.*,
+
+            s.student_id AS student_number,
+            s.first_name,
+            s.middle_name,
+            s.last_name,
+            s.gender,
+            s.dob,
+            s.photo,
+
+            c.class_name,
+
+            t.term_name,
+
+            ay.academic_year
+
+        FROM report_card_records r
+
+        INNER JOIN students s
+            ON s.id = r.student_id
+
+        INNER JOIN classes c
+            ON c.id = r.class_id
+
+        INNER JOIN terms t
+            ON t.id = r.term_id
+
+        INNER JOIN academic_years ay
+            ON ay.id = t.academic_year_id
+
+        WHERE r.id = ?
+
         LIMIT 1
     ");
 
-    $school = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt->execute([
+        $reportId
+    ]);
 
-} catch (PDOException $e) {
-
-    $school = null;
-}
-
-
-$schoolName =
-    $school["school_name"]
-    ?? "HILLTOP INTERNATIONAL BRITISH SCHOOL";
-
-$headteacherName =
-    $school["headteacher_name"]
-    ?? "";
-
-$principalTitle =
-    $school["principal_title"]
-    ?? "Headteacher";
+    $report =
+        $stmt->fetch(
+            PDO::FETCH_ASSOC
+        );
 
 
-/*
-|--------------------------------------------------------------------------
-| LOAD STUDENT OVERALL RESULT
-|--------------------------------------------------------------------------
-*/
+    if (!$report) {
 
-$stmt = $conn->prepare("
-    SELECT
-        total_score,
-        average_score,
-        position,
-        class_size
-
-    FROM student_results
-
-    WHERE
-        student_id = ?
-        AND class_id = ?
-        AND term_id = ?
-
-    LIMIT 1
-");
-
-$stmt->execute([
-    $student_id,
-    $class_id,
-    $term_id
-]);
-
-$overall = $stmt->fetch(PDO::FETCH_ASSOC);
-
-
-/*
-|--------------------------------------------------------------------------
-| AUTOMATIC TEACHER COMMENT
-|--------------------------------------------------------------------------
-*/
-
-$average =
-    $overall
-    ? (float)$overall["average_score"]
-    : 0;
-
-
-function generateTeacherComment(
-    float $average
-): string {
-
-    if ($average >= 90) {
-
-        return
-            "An outstanding performance. "
-            . "The student has demonstrated excellent "
-            . "understanding and consistently high achievement. "
-            . "This excellent standard should be maintained.";
-
+        throw new Exception(
+            "The requested report could not be found."
+        );
     }
-
-    if ($average >= 80) {
-
-        return
-            "Excellent performance. "
-            . "The student has demonstrated a very strong "
-            . "understanding of the work covered and has made "
-            . "commendable progress throughout the term.";
-
-    }
-
-    if ($average >= 70) {
-
-        return
-            "Very good performance. "
-            . "The student has demonstrated good understanding "
-            . "of the subjects covered and is making very good "
-            . "academic progress.";
-
-    }
-
-    if ($average >= 60) {
-
-        return
-            "A good performance. "
-            . "The student has made satisfactory progress "
-            . "during the term. Greater consistency and "
-            . "continued effort will support further improvement.";
-
-    }
-
-    if ($average >= 50) {
-
-        return
-            "The student has made satisfactory progress. "
-            . "More consistent effort, regular revision and "
-            . "greater participation in lessons are encouraged.";
-
-    }
-
-    if ($average >= 40) {
-
-        return
-            "The student needs to improve academic performance. "
-            . "Greater effort, regular revision and additional "
-            . "academic support are recommended.";
-
-    }
-
-    return
-        "The student's current academic performance requires "
-        . "significant improvement. A structured programme of "
-        . "additional support, regular revision and close "
-        . "monitoring is recommended.";
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| AUTOMATIC PROMOTION RECOMMENDATION
-|--------------------------------------------------------------------------
-*/
-
-function generatePromotionRecommendation(
-    float $average,
-    float $attendance
-): string {
-
-    if (
-        $average >= 50 &&
-        $attendance >= 75
-    ) {
-
-        return "Promoted";
-    }
-
-
-    if (
-        $average >= 45 &&
-        $attendance >= 70
-    ) {
-
-        return "Conditional";
-    }
-
-
-    if (
-        $average > 0
-    ) {
-
-        return "Not Promoted";
-    }
-
-
-    return "Pending";
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| LOAD EXISTING REPORT DETAILS
-|--------------------------------------------------------------------------
-*/
-
-$stmt = $conn->prepare("
-    SELECT *
-    FROM report_card_records
-
-    WHERE
-        student_id = ?
-        AND class_id = ?
-        AND term_id = ?
-
-    LIMIT 1
-");
-
-$stmt->execute([
-    $student_id,
-    $class_id,
-    $term_id
-]);
-
-$report = $stmt->fetch(PDO::FETCH_ASSOC);
-
-
-/*
-|--------------------------------------------------------------------------
-| DEFAULT VALUES
-|--------------------------------------------------------------------------
-*/
-
-$daysOpened =
-    isset($report["days_opened"])
-    ? (int)$report["days_opened"]
-    : 0;
-
-$daysPresent =
-    isset($report["days_present"])
-    ? (int)$report["days_present"]
-    : 0;
-
-$daysAbsent =
-    isset($report["days_absent"])
-    ? (int)$report["days_absent"]
-    : 0;
-
-$conduct =
-    $report["conduct"]
-    ?? "";
-
-$teacherComment =
-    $report["teacher_comment"]
-    ?? "";
-
-$headteacherComment =
-    $report["headteacher_comment"]
-    ?? "";
-
-$promotionStatus =
-    $report["promotion_status"]
-    ?? "Pending";
-
-$reportStatus =
-    $report["report_status"]
-    ?? "Draft";
-
-
-/*
-|--------------------------------------------------------------------------
-| ATTENDANCE CALCULATION
-|--------------------------------------------------------------------------
-*/
-
-$attendancePercentage = 0;
-
-if ($daysOpened > 0) {
-
-    $attendancePercentage =
-        ($daysPresent / $daysOpened) * 100;
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| AUTOMATIC SUGGESTIONS
-|--------------------------------------------------------------------------
-*/
-
-$automaticComment =
-    generateTeacherComment($average);
-
-$automaticPromotion =
-    generatePromotionRecommendation(
-        $average,
-        $attendancePercentage
-    );
-
-
-/*
-|--------------------------------------------------------------------------
-| FORM SUBMISSION
-|--------------------------------------------------------------------------
-*/
-
-$message = "";
-$error = "";
-
-
-if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
 
     /*
     |--------------------------------------------------------------------------
-    | CSRF CHECK
+    | SUBJECTS
     |--------------------------------------------------------------------------
     */
 
-    $postedToken =
-        $_POST["csrf_token"] ?? "";
+    $stmt = $conn->prepare("
+        SELECT
 
-    if (
-        !hash_equals(
-            $_SESSION["csrf_token"],
-            $postedToken
-        )
+            id,
+            subject_name
+
+        FROM subjects
+
+        ORDER BY subject_name ASC
+    ");
+
+    $stmt->execute();
+
+    $subjects =
+        $stmt->fetchAll(
+            PDO::FETCH_ASSOC
+        );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESULTS
+    |--------------------------------------------------------------------------
+    |
+    | The system checks the common report-result table.
+    |
+    */
+
+    $resultTableExists = false;
+
+
+    try {
+
+        $check =
+            $conn->query("
+                SHOW TABLES LIKE 'report_card_results'
+            ");
+
+        $resultTableExists =
+            $check->rowCount() > 0;
+
+    } catch (
+        Throwable $e
     ) {
 
-        $error =
-            "Security verification failed. "
-            . "Please refresh the page and try again.";
+        $resultTableExists = false;
+    }
 
-    } elseif ($reportStatus === "Published") {
 
-        $error =
-            "This report has already been published "
-            . "and can no longer be edited.";
+    if (
+        $resultTableExists
+    ) {
+
+        $stmt = $conn->prepare("
+            SELECT
+
+                rr.*,
+
+                s.subject_name
+
+            FROM report_card_results rr
+
+            INNER JOIN subjects s
+                ON s.id = rr.subject_id
+
+            WHERE
+
+                rr.report_id = ?
+
+            ORDER BY
+
+                s.subject_name ASC
+        ");
+
+        $stmt->execute([
+            $reportId
+        ]);
+
+        $results =
+            $stmt->fetchAll(
+                PDO::FETCH_ASSOC
+            );
+    }
+
+
+} catch (
+    Throwable $e
+) {
+
+    $error =
+        $e->getMessage();
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| SAVE REPORT
+|--------------------------------------------------------------------------
+*/
+
+if (
+    $_SERVER["REQUEST_METHOD"] === "POST" &&
+    $report
+) {
+
+    $action =
+        $_POST["action"]
+        ?? "save";
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | BASIC VALUES
+    |--------------------------------------------------------------------------
+    */
+
+    $daysOpened =
+        max(
+            0,
+            (int)(
+                $_POST["days_opened"]
+                ?? 0
+            )
+        );
+
+
+    $daysPresent =
+        max(
+            0,
+            (int)(
+                $_POST["days_present"]
+                ?? 0
+            )
+        );
+
+
+    $daysAbsent =
+        max(
+            0,
+            $daysOpened - $daysPresent
+        );
+
+
+    $position =
+        trim(
+            $_POST["position"]
+            ?? ""
+        );
+
+
+    $classSize =
+        trim(
+            $_POST["class_size"]
+            ?? ""
+        );
+
+
+    $promotionStatus =
+        trim(
+            $_POST["promotion_status"]
+            ?? ""
+        );
+
+
+    $conduct =
+        trim(
+            $_POST["conduct"]
+            ?? ""
+        );
+
+
+    $teacherComment =
+        trim(
+            $_POST["teacher_comment"]
+            ?? ""
+        );
+
+
+    $headteacherComment =
+        trim(
+            $_POST["headteacher_comment"]
+            ?? ""
+        );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | AVERAGE
+    |--------------------------------------------------------------------------
+    */
+
+    $averageScore =
+        trim(
+            $_POST["average_score"]
+            ?? ""
+        );
+
+
+    if (
+        $averageScore !== ""
+    ) {
+
+        $averageScore =
+            (float)$averageScore;
 
     } else {
 
+        $averageScore = null;
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | STATUS
+    |--------------------------------------------------------------------------
+    */
+
+    $currentStatus =
+        $report[
+            "report_status"
+        ]
+        ?? "Draft";
+
+
+    $newStatus =
+        $currentStatus;
+
+
+    if (
+        $action === "save"
+    ) {
 
         /*
-        |--------------------------------------------------------------------------
-        | GET FORM VALUES
-        |--------------------------------------------------------------------------
+        | Do not move an approved or published report
+        | backwards accidentally.
         */
 
-        $daysOpened =
-            filter_var(
-                $_POST["days_opened"] ?? null,
-                FILTER_VALIDATE_INT
-            );
+        if (
+            $currentStatus === "Draft"
+        ) {
 
-        $daysPresent =
-            filter_var(
-                $_POST["days_present"] ?? null,
-                FILTER_VALIDATE_INT
-            );
+            $newStatus =
+                "Draft";
+        }
 
-        $conduct =
-            trim(
-                $_POST["conduct"] ?? ""
-            );
+    } elseif (
+        $action === "submit"
+    ) {
 
-        $teacherComment =
-            trim(
-                $_POST["teacher_comment"] ?? ""
-            );
+        /*
+        | Submit the completed report for approval.
+        */
 
-        $headteacherComment =
-            trim(
-                $_POST["headteacher_comment"] ?? ""
-            );
+        if (
+            $currentStatus === "Draft"
+        ) {
 
-        $promotionStatus =
-            trim(
-                $_POST["promotion_status"] ?? ""
-            );
+            $newStatus =
+                "Draft";
+        }
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | UPDATE REPORT
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+
+        $conn->beginTransaction();
+
+
+        $stmt = $conn->prepare("
+            UPDATE report_card_records
+
+            SET
+
+                average_score = ?,
+
+                position = ?,
+
+                class_size = ?,
+
+                days_opened = ?,
+
+                days_present = ?,
+
+                days_absent = ?,
+
+                conduct = ?,
+
+                promotion_status = ?,
+
+                teacher_comment = ?,
+
+                headteacher_comment = ?,
+
+                report_status = ?,
+
+                updated_at = NOW()
+
+            WHERE id = ?
+        ");
+
+
+        $stmt->execute([
+
+            $averageScore,
+
+            $position !== ""
+                ? $position
+                : null,
+
+            $classSize !== ""
+                ? $classSize
+                : null,
+
+            $daysOpened,
+
+            $daysPresent,
+
+            $daysAbsent,
+
+            $conduct !== ""
+                ? $conduct
+                : null,
+
+            $promotionStatus !== ""
+                ? $promotionStatus
+                : null,
+
+            $teacherComment !== ""
+                ? $teacherComment
+                : null,
+
+            $headteacherComment !== ""
+                ? $headteacherComment
+                : null,
+
+            $newStatus,
+
+            $reportId
+
+        ]);
 
 
         /*
         |--------------------------------------------------------------------------
-        | VALIDATE ATTENDANCE
+        | SUBJECT RESULTS
         |--------------------------------------------------------------------------
         */
 
         if (
-            $daysOpened === false ||
-            $daysOpened === null ||
-            $daysOpened < 0
+            $resultTableExists
         ) {
 
-            $error =
-                "Days school opened must be a valid number.";
-
-        } elseif (
-            $daysPresent === false ||
-            $daysPresent === null ||
-            $daysPresent < 0
-        ) {
-
-            $error =
-                "Days present must be a valid number.";
-
-        } elseif (
-            $daysPresent > $daysOpened
-        ) {
-
-            $error =
-                "Days present cannot be greater than "
-                . "days school opened.";
-
-        } else {
+            $subjectScores =
+                $_POST["subject_score"]
+                ?? [];
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | CALCULATE ABSENCE AUTOMATICALLY
-            |--------------------------------------------------------------------------
-            */
-
-            $daysAbsent =
-                $daysOpened - $daysPresent;
+            $subjectGrades =
+                $_POST["subject_grade"]
+                ?? [];
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | CALCULATE ATTENDANCE PERCENTAGE
-            |--------------------------------------------------------------------------
-            */
-
-            if ($daysOpened > 0) {
-
-                $attendancePercentage =
-                    (
-                        $daysPresent /
-                        $daysOpened
-                    ) * 100;
-
-            } else {
-
-                $attendancePercentage = 0;
-            }
+            $subjectComments =
+                $_POST["subject_comment"]
+                ?? [];
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | VALIDATE CONDUCT
-            |--------------------------------------------------------------------------
-            */
-
-            $allowedConduct = [
-                "Excellent",
-                "Very Good",
-                "Good",
-                "Satisfactory",
-                "Needs Improvement"
-            ];
-
-
-            if (
-                !in_array(
-                    $conduct,
-                    $allowedConduct,
-                    true
-                )
+            foreach (
+                $subjects
+                as $subject
             ) {
 
-                $error =
-                    "Please select a valid conduct rating.";
-
-            }
+                $subjectId =
+                    (int)$subject["id"];
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | VALIDATE PROMOTION STATUS
-            |--------------------------------------------------------------------------
-            */
-
-            $allowedPromotion = [
-                "Promoted",
-                "Conditional",
-                "Not Promoted",
-                "Pending"
-            ];
+                $score =
+                    trim(
+                        $subjectScores[
+                            $subjectId
+                        ]
+                        ?? ""
+                    );
 
 
-            if (
-                $error === "" &&
-                !in_array(
-                    $promotionStatus,
-                    $allowedPromotion,
-                    true
-                )
-            ) {
-
-                $error =
-                    "Please select a valid promotion status.";
-
-            }
+                $grade =
+                    trim(
+                        $subjectGrades[
+                            $subjectId
+                        ]
+                        ?? ""
+                    );
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | SAVE REPORT
-            |--------------------------------------------------------------------------
-            */
-
-            if ($error === "") {
-
-                try {
-
-                    /*
-                    |----------------------------------------------------------
-                    | HEADTEACHER COMMENT DEFAULT
-                    |----------------------------------------------------------
-                    */
-
-                    if ($headteacherComment === "") {
-
-                        $headteacherComment =
-                            "The student has completed "
-                            . "the academic term. "
-                            . "Continued effort and commitment "
-                            . "to learning are encouraged.";
-                    }
+                $comment =
+                    trim(
+                        $subjectComments[
+                            $subjectId
+                        ]
+                        ?? ""
+                    );
 
 
-                    /*
-                    |----------------------------------------------------------
-                    | TEACHER NAME
-                    |----------------------------------------------------------
-                    */
+                /*
+                |--------------------------------------------------------------------------
+                | CHECK EXISTING RESULT
+                |--------------------------------------------------------------------------
+                */
 
-                    $teacherName =
-                        $report["teacher_name"]
-                        ?? null;
+                $check =
+                    $conn->prepare("
+                        SELECT id
 
-
-                    /*
-                    |----------------------------------------------------------
-                    | SAVE
-                    |----------------------------------------------------------
-                    */
-
-                    $stmt = $conn->prepare("
-                        INSERT INTO report_card_records
-                        (
-                            student_id,
-                            class_id,
-                            term_id,
-
-                            days_opened,
-                            days_present,
-                            days_absent,
-
-                            conduct,
-
-                            teacher_comment,
-                            headteacher_comment,
-
-                            promotion_status,
-
-                            report_status,
-
-                            teacher_name,
-                            headteacher_name
-
-                        )
-
-                        VALUES
-                        (
-                            ?,
-                            ?,
-                            ?,
-
-                            ?,
-                            ?,
-                            ?,
-
-                            ?,
-
-                            ?,
-                            ?,
-
-                            ?,
-
-                            'Draft',
-
-                            ?,
-                            ?
-                        )
-
-                        ON DUPLICATE KEY UPDATE
-
-                            days_opened =
-                                VALUES(days_opened),
-
-                            days_present =
-                                VALUES(days_present),
-
-                            days_absent =
-                                VALUES(days_absent),
-
-                            conduct =
-                                VALUES(conduct),
-
-                            teacher_comment =
-                                VALUES(teacher_comment),
-
-                            headteacher_comment =
-                                VALUES(headteacher_comment),
-
-                            promotion_status =
-                                VALUES(promotion_status),
-
-                            teacher_name =
-                                VALUES(teacher_name),
-
-                            headteacher_name =
-                                VALUES(headteacher_name)
-                    ");
-
-
-                    $stmt->execute([
-
-                        $student_id,
-                        $class_id,
-                        $term_id,
-
-                        $daysOpened,
-                        $daysPresent,
-                        $daysAbsent,
-
-                        $conduct,
-
-                        $teacherComment,
-                        $headteacherComment,
-
-                        $promotionStatus,
-
-                        $teacherName,
-                        $headteacherName
-
-                    ]);
-
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | SUCCESS
-                    |--------------------------------------------------------------------------
-                    */
-
-                    $message =
-                        "Report details saved successfully.";
-
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | RELOAD RECORD
-                    |--------------------------------------------------------------------------
-                    */
-
-                    $stmt = $conn->prepare("
-                        SELECT *
-                        FROM report_card_records
+                        FROM report_card_results
 
                         WHERE
-                            student_id = ?
-                            AND class_id = ?
-                            AND term_id = ?
+
+                            report_id = ?
+
+                            AND subject_id = ?
 
                         LIMIT 1
                     ");
 
-                    $stmt->execute([
-                        $student_id,
-                        $class_id,
-                        $term_id
+                $check->execute([
+
+                    $reportId,
+
+                    $subjectId
+
+                ]);
+
+
+                $existing =
+                    $check->fetch(
+                        PDO::FETCH_ASSOC
+                    );
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | NOTHING ENTERED
+                |--------------------------------------------------------------------------
+                */
+
+                if (
+                    $score === "" &&
+                    $grade === "" &&
+                    $comment === ""
+                ) {
+
+                    if (
+                        $existing
+                    ) {
+
+                        $delete =
+                            $conn->prepare("
+                                DELETE FROM
+                                    report_card_results
+
+                                WHERE id = ?
+                            ");
+
+                        $delete->execute([
+
+                            $existing["id"]
+
+                        ]);
+                    }
+
+                    continue;
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | INSERT
+                |--------------------------------------------------------------------------
+                */
+
+                if (
+                    !$existing
+                ) {
+
+                    $insert =
+                        $conn->prepare("
+                            INSERT INTO
+                                report_card_results
+                            (
+                                report_id,
+                                subject_id,
+                                score,
+                                grade,
+                                comment,
+                                created_at,
+                                updated_at
+                            )
+
+                            VALUES
+                            (
+                                ?,
+                                ?,
+                                ?,
+                                ?,
+                                ?,
+                                NOW(),
+                                NOW()
+                            )
+                        ");
+
+
+                    $insert->execute([
+
+                        $reportId,
+
+                        $subjectId,
+
+                        $score !== ""
+                            ? (float)$score
+                            : null,
+
+                        $grade !== ""
+                            ? $grade
+                            : null,
+
+                        $comment !== ""
+                            ? $comment
+                            : null
+
                     ]);
 
-                    $report =
-                        $stmt->fetch(PDO::FETCH_ASSOC);
+
+                } else {
 
 
-                    $reportStatus =
-                        $report["report_status"]
-                        ?? "Draft";
+                    /*
+                    |--------------------------------------------------------------------------
+                    | UPDATE
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $update =
+                        $conn->prepare("
+                            UPDATE
+                                report_card_results
+
+                            SET
+
+                                score = ?,
+
+                                grade = ?,
+
+                                comment = ?,
+
+                                updated_at = NOW()
+
+                            WHERE id = ?
+                        ");
 
 
-                } catch (PDOException $e) {
+                    $update->execute([
 
-                    $error =
-                        "The report could not be saved. "
-                        . "Database error: "
-                        . $e->getMessage();
+                        $score !== ""
+                            ? (float)$score
+                            : null,
+
+                        $grade !== ""
+                            ? $grade
+                            : null,
+
+                        $comment !== ""
+                            ? $comment
+                            : null,
+
+                        $existing["id"]
+
+                    ]);
                 }
             }
         }
-    }
-}
 
 
-/*
-|--------------------------------------------------------------------------
-| POSITION TEXT
-|--------------------------------------------------------------------------
-*/
-
-$positionText = "Not calculated";
+        $conn->commit();
 
 
-if ($overall) {
-
-    $position =
-        (int)$overall["position"];
-
-    $classSize =
-        (int)$overall["class_size"];
-
-
-    if (
-        $position > 0 &&
-        $classSize > 0
-    ) {
-
-        $suffix = "th";
-
+        /*
+        |--------------------------------------------------------------------------
+        | SUCCESS MESSAGE
+        |--------------------------------------------------------------------------
+        */
 
         if (
-            $position % 100 < 11 ||
-            $position % 100 > 13
+            $action === "submit"
         ) {
 
-            switch (
-                $position % 10
-            ) {
+            $success =
+                "Report saved successfully and is ready for administrative approval.";
 
-                case 1:
-                    $suffix = "st";
-                    break;
+        } else {
 
-                case 2:
-                    $suffix = "nd";
-                    break;
-
-                case 3:
-                    $suffix = "rd";
-                    break;
-            }
+            $success =
+                "Report saved successfully.";
         }
 
 
-        $positionText =
-            $position .
-            $suffix .
-            " out of " .
-            $classSize;
+        /*
+        |--------------------------------------------------------------------------
+        | RELOAD REPORT
+        |--------------------------------------------------------------------------
+        */
+
+        $stmt = $conn->prepare("
+            SELECT
+
+                r.*,
+
+                s.student_id AS student_number,
+                s.first_name,
+                s.middle_name,
+                s.last_name,
+                s.gender,
+                s.dob,
+                s.photo,
+
+                c.class_name,
+
+                t.term_name,
+
+                ay.academic_year
+
+            FROM report_card_records r
+
+            INNER JOIN students s
+                ON s.id = r.student_id
+
+            INNER JOIN classes c
+                ON c.id = r.class_id
+
+            INNER JOIN terms t
+                ON t.id = r.term_id
+
+            INNER JOIN academic_years ay
+                ON ay.id = t.academic_year_id
+
+            WHERE r.id = ?
+
+            LIMIT 1
+        ");
+
+        $stmt->execute([
+            $reportId
+        ]);
+
+        $report =
+            $stmt->fetch(
+                PDO::FETCH_ASSOC
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | RELOAD RESULTS
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $resultTableExists
+        ) {
+
+            $stmt = $conn->prepare("
+                SELECT
+
+                    rr.*,
+
+                    s.subject_name
+
+                FROM report_card_results rr
+
+                INNER JOIN subjects s
+                    ON s.id = rr.subject_id
+
+                WHERE rr.report_id = ?
+
+                ORDER BY s.subject_name ASC
+            ");
+
+            $stmt->execute([
+                $reportId
+            ]);
+
+            $results =
+                $stmt->fetchAll(
+                    PDO::FETCH_ASSOC
+                );
+        }
+
+
+    } catch (
+        Throwable $e
+    ) {
+
+        if (
+            $conn->inTransaction()
+        ) {
+
+            $conn->rollBack();
+        }
+
+
+        $error =
+            $e->getMessage();
     }
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| REPORT STATUS CLASS
+| RESULT LOOKUP
 |--------------------------------------------------------------------------
 */
 
+$resultBySubject = [];
+
+foreach (
+    $results
+    as $result
+) {
+
+    $resultBySubject[
+        (int)$result["subject_id"]
+    ] =
+        $result;
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| STUDENT NAME
+|--------------------------------------------------------------------------
+*/
+
+$studentName = "";
+
+if ($report) {
+
+    $studentName =
+        trim(
+            implode(
+                " ",
+                array_filter([
+                    $report["first_name"] ?? "",
+                    $report["middle_name"] ?? "",
+                    $report["last_name"] ?? ""
+                ])
+            )
+        );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| STATUS
+|--------------------------------------------------------------------------
+*/
+
+$status =
+    $report[
+        "report_status"
+    ]
+    ?? "Draft";
+
+
 $statusClass =
-    strtolower(
-        $reportStatus
-    );
+    "draft";
+
+
+if (
+    $status === "Approved"
+) {
+
+    $statusClass =
+        "approved";
+
+} elseif (
+    $status === "Published"
+) {
+
+    $statusClass =
+        "published";
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| PHOTO
+|--------------------------------------------------------------------------
+*/
+
+$photoPath = "";
+
+if (
+    $report &&
+    !empty(
+        $report["photo"]
+    )
+) {
+
+    $possiblePhotos = [
+
+        "../uploads/students/"
+        . $report["photo"],
+
+        "../uploads/"
+        . $report["photo"],
+
+        "../assets/uploads/students/"
+        . $report["photo"]
+
+    ];
+
+
+    foreach (
+        $possiblePhotos
+        as $photo
+    ) {
+
+        if (
+            is_file(
+                __DIR__
+                . "/"
+                . $photo
+            )
+        ) {
+
+            $photoPath =
+                $photo;
+
+            break;
+        }
+    }
+}
 
 ?>
 
@@ -932,87 +1031,392 @@ $statusClass =
     content="width=device-width, initial-scale=1.0"
 >
 
+<meta
+    name="theme-color"
+    content="#263238"
+>
+
 <title>
     HIBS Reports | Report Details
 </title>
-
-<link
-    rel="stylesheet"
-    href="../assets/css/style.css"
->
 
 
 <style>
 
 /* =========================================================
-   PAGE
+   HIBS REPORT EDITOR
 ========================================================= */
 
-.details-container {
-    max-width: 1200px;
-    margin: 0 auto;
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+}
+
+body {
+
+    margin: 0;
+
+    background: #f5f4f0;
+
+    color: #263238;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
 }
 
 
 /* =========================================================
-   STUDENT HEADER
+   SIDEBAR
 ========================================================= */
 
-.student-header {
-    background: #ffffff;
-    border: 1px solid #e2ddd6;
-    padding: 25px;
+.sidebar {
+
+    position: fixed;
+
+    left: 0;
+    top: 0;
+
+    width: 245px;
+
+    height: 100vh;
+
+    background: #263238;
+
+    color: #ffffff;
+
+    padding: 28px 18px;
+
+}
+
+
+.brand {
+
+    padding:
+        4px 10px 28px;
+
     margin-bottom: 22px;
 
-    display: flex;
-    align-items: center;
-    gap: 22px;
+    border-bottom:
+        1px solid
+        rgba(255,255,255,.12);
+
 }
 
-.student-photo {
-    width: 90px;
-    height: 105px;
 
-    object-fit: cover;
+.brand-title {
 
-    border: 2px solid #641c2b;
+    font-size: 18px;
 
-    background: #f5f1eb;
+    font-weight: 700;
+
+    letter-spacing: 1px;
+
 }
 
-.student-photo-placeholder {
-    width: 90px;
-    height: 105px;
 
-    border: 2px solid #641c2b;
+.brand-subtitle {
 
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    margin-top: 6px;
 
-    background: #f5f1eb;
+    color: #b9c3c8;
 
-    color: #777;
+    font-size: 9px;
 
-    font-family: Arial, sans-serif;
+    line-height: 1.5;
+
+    letter-spacing: 1px;
+
+}
+
+
+.nav-title {
+
+    padding:
+        0 10px 8px;
+
+    color: #8e9ba1;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    text-transform: uppercase;
+
+    letter-spacing: 1px;
+
+}
+
+
+.nav-link {
+
+    display: block;
+
+    padding: 12px;
+
+    margin-bottom: 4px;
+
+    color: #dce2e5;
+
+    text-decoration: none;
+
+    font-size: 11px;
+
+    border-radius: 4px;
+
+}
+
+
+.nav-link:hover {
+
+    background: #37474f;
+
+}
+
+
+.nav-link.active {
+
+    background: #546e7a;
+
+    color: #ffffff;
+
+}
+
+
+.sidebar-bottom {
+
+    position: absolute;
+
+    left: 18px;
+    right: 18px;
+
+    bottom: 22px;
+
+}
+
+
+.logout {
+
+    display: block;
+
+    padding: 11px;
+
+    color: #dce2e5;
+
+    border:
+        1px solid
+        rgba(255,255,255,.15);
+
+    text-align: center;
+
+    text-decoration: none;
+
     font-size: 10px;
+
+    border-radius: 4px;
+
 }
 
-.student-header h2 {
-    margin: 0 0 6px;
 
-    color: #641c2b;
+/* =========================================================
+   MAIN
+========================================================= */
 
-    font-weight: normal;
+.main {
+
+    margin-left: 245px;
+
+    min-height: 100vh;
+
 }
 
-.student-header p {
-    margin: 4px 0;
 
-    color: #777;
+/* =========================================================
+   TOPBAR
+========================================================= */
 
-    font-family: Arial, sans-serif;
-    font-size: 12px;
+.topbar {
+
+    height: 72px;
+
+    padding:
+        0 35px;
+
+    background: #ffffff;
+
+    border-bottom:
+        1px solid
+        #deddd8;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+}
+
+
+.topbar-title {
+
+    font-size: 17px;
+
+    font-weight: 600;
+
+    color: #263238;
+
+}
+
+
+.topbar-right {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 12px;
+
+}
+
+
+.admin-name {
+
+    color: #546e7a;
+
+    font-size: 10px;
+
+    font-weight: 600;
+
+}
+
+
+/* =========================================================
+   CONTENT
+========================================================= */
+
+.content {
+
+    padding:
+        30px 35px;
+
+    max-width: 1500px;
+
+}
+
+
+/* =========================================================
+   HEADER
+========================================================= */
+
+.page-header {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: flex-start;
+
+    gap: 20px;
+
+    margin-bottom: 20px;
+
+}
+
+
+.page-header h1 {
+
+    margin: 0;
+
+    color: #263238;
+
+    font-size: 24px;
+
+    font-weight: 600;
+
+}
+
+
+.page-header p {
+
+    margin:
+        7px 0 0;
+
+    color: #7a858a;
+
+    font-size: 10px;
+
+}
+
+
+.back {
+
+    display: inline-block;
+
+    padding:
+        10px 13px;
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #d4d3ce;
+
+    color: #455a64;
+
+    text-decoration: none;
+
+    font-size: 9px;
+
+    border-radius: 3px;
+
+}
+
+
+/* =========================================================
+   ALERTS
+========================================================= */
+
+.alert {
+
+    margin-bottom: 18px;
+
+    padding: 13px 15px;
+
+    font-size: 10px;
+
+}
+
+
+.alert-success {
+
+    background: #eaf2ed;
+
+    border:
+        1px solid
+        #c9ddcf;
+
+    color: #42664e;
+
+}
+
+
+.alert-error {
+
+    background: #fbf1f1;
+
+    border:
+        1px solid
+        #e1c8c8;
+
+    color: #8b4b4b;
+
 }
 
 
@@ -1020,55 +1424,172 @@ $statusClass =
    STATUS
 ========================================================= */
 
-.report-status {
-    margin-left: auto;
+.status-box {
 
-    text-align: right;
+    margin-bottom: 20px;
+
+    padding: 14px 17px;
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #deddd8;
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
 }
 
-.status-label {
-    display: block;
 
-    font-family: Arial, sans-serif;
+.status-label {
+
+    color: #7a858a;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    text-transform: uppercase;
+
+}
+
+
+.status {
+
+    display: inline-block;
+
+    padding:
+        7px 10px;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    text-transform: uppercase;
+
+}
+
+
+.status.draft {
+
+    background: #f3eee5;
+
+    color: #806744;
+
+}
+
+
+.status.approved {
+
+    background: #e9eef2;
+
+    color: #506675;
+
+}
+
+
+.status.published {
+
+    background: #e8f1eb;
+
+    color: #3e6b4e;
+
+}
+
+
+/* =========================================================
+   STUDENT HEADER
+========================================================= */
+
+.student-card {
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #deddd8;
+
+    padding: 22px;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 18px;
+
+    margin-bottom: 20px;
+
+}
+
+
+.student-photo {
+
+    width: 75px;
+    height: 88px;
+
+    object-fit: cover;
+
+    border:
+        1px solid
+        #c9c7c2;
+
+}
+
+
+.photo-placeholder {
+
+    width: 75px;
+    height: 88px;
+
+    background: #edf0ef;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    color: #8a9599;
+
+    font-size: 7px;
+
+    text-align: center;
+
+}
+
+
+.student-name {
+
+    margin: 0;
+
+    color: #263238;
+
+    font-size: 18px;
+
+    font-weight: 600;
+
+}
+
+
+.student-meta {
+
+    margin-top: 7px;
+
+    color: #7a858a;
 
     font-size: 9px;
 
-    color: #888;
-
-    text-transform: uppercase;
-
-    letter-spacing: 1px;
-
-    margin-bottom: 6px;
 }
 
-.status-badge {
-    display: inline-block;
 
-    padding: 7px 14px;
+.student-meta span {
 
-    font-family: Arial, sans-serif;
+    margin-right: 15px;
 
-    font-size: 10px;
-
-    text-transform: uppercase;
-
-    letter-spacing: .7px;
-}
-
-.status-draft {
-    background: #eee;
-    color: #555;
-}
-
-.status-approved {
-    background: #f0e6cf;
-    color: #74571d;
-}
-
-.status-published {
-    background: #e3eee7;
-    color: #2f6142;
 }
 
 
@@ -1076,36 +1597,69 @@ $statusClass =
    PANELS
 ========================================================= */
 
-.details-panel {
+.panel {
+
     background: #ffffff;
 
-    border: 1px solid #e2ddd6;
+    border:
+        1px solid
+        #deddd8;
 
-    padding: 28px;
+    margin-bottom: 20px;
 
-    margin-bottom: 22px;
 }
 
-.details-panel h3 {
-    margin: 0 0 20px;
 
-    color: #641c2b;
+.panel-header {
 
-    font-size: 18px;
+    padding:
+        18px 21px;
 
-    font-weight: normal;
+    border-bottom:
+        1px solid
+        #e7e5e1;
 
-    padding-bottom: 10px;
+}
 
-    border-bottom: 1px solid #b58a3a;
+
+.panel-header h2 {
+
+    margin: 0;
+
+    color: #37474f;
+
+    font-size: 15px;
+
+    font-weight: 600;
+
+}
+
+
+.panel-header p {
+
+    margin:
+        5px 0 0;
+
+    color: #8a9498;
+
+    font-size: 9px;
+
 }
 
 
 /* =========================================================
-   PERFORMANCE SUMMARY
+   FORM
 ========================================================= */
 
-.performance-summary {
+.form-body {
+
+    padding: 21px;
+
+}
+
+
+.form-grid {
+
     display: grid;
 
     grid-template-columns:
@@ -1113,172 +1667,323 @@ $statusClass =
 
     gap: 15px;
 
-    margin-bottom: 25px;
 }
 
-.performance-card {
-    background: #f8f4ee;
 
-    border: 1px solid #e3dbd1;
+.field label {
 
-    padding: 18px;
-
-    text-align: center;
-}
-
-.performance-card span {
     display: block;
 
-    font-family: Arial, sans-serif;
+    margin-bottom: 6px;
 
-    font-size: 9px;
+    color: #6f7d82;
 
-    color: #777;
+    font-size: 8px;
+
+    font-weight: bold;
 
     text-transform: uppercase;
 
-    letter-spacing: .7px;
+    letter-spacing: .5px;
 
-    margin-bottom: 7px;
 }
 
-.performance-card strong {
-    display: block;
 
-    color: #641c2b;
+.field input,
+.field select,
+.field textarea {
 
-    font-size: 22px;
+    width: 100%;
+
+    border:
+        1px solid
+        #d4d3ce;
+
+    background: #ffffff;
+
+    color: #455a64;
+
+    font-family: inherit;
+
+    font-size: 10px;
+
+    outline: none;
+
+}
+
+
+.field input,
+.field select {
+
+    height: 38px;
+
+    padding:
+        0 10px;
+
+}
+
+
+.field textarea {
+
+    min-height: 90px;
+
+    padding: 10px;
+
+    resize: vertical;
+
+}
+
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+
+    border-color:
+        #78909c;
+
 }
 
 
 /* =========================================================
-   ATTENDANCE
+   RESULTS TABLE
 ========================================================= */
 
-.attendance-preview {
+.table-wrap {
+
+    overflow-x: auto;
+
+}
+
+
+.results-table {
+
+    width: 100%;
+
+    min-width: 900px;
+
+    border-collapse: collapse;
+
+}
+
+
+.results-table th {
+
+    padding:
+        11px 10px;
+
+    background: #f2f3f1;
+
+    color: #69777c;
+
+    border-bottom:
+        1px solid
+        #dddcd7;
+
+    text-align: left;
+
+    font-size: 7px;
+
+    text-transform: uppercase;
+
+    letter-spacing: .5px;
+
+}
+
+
+.results-table td {
+
+    padding:
+        9px 10px;
+
+    border-bottom:
+        1px solid
+        #eceae6;
+
+    vertical-align: middle;
+
+}
+
+
+.results-table input {
+
+    width: 100%;
+
+    height: 34px;
+
+    padding:
+        0 8px;
+
+    border:
+        1px solid
+        #d4d3ce;
+
+    color: #455a64;
+
+    font-size: 9px;
+
+    outline: none;
+
+}
+
+
+.results-table input:focus {
+
+    border-color:
+        #78909c;
+
+}
+
+
+.subject-name {
+
+    color: #455a64;
+
+    font-size: 9px;
+
+    font-weight: 600;
+
+}
+
+
+/* =========================================================
+   COMMENTS
+========================================================= */
+
+.comments-grid {
+
     display: grid;
 
     grid-template-columns:
-        repeat(4, 1fr);
+        repeat(2, 1fr);
 
-    gap: 12px;
+    gap: 18px;
 
-    margin-top: 15px;
-}
-
-.attendance-card {
-    border: 1px solid #e1d9d0;
-
-    padding: 15px;
-
-    text-align: center;
-}
-
-.attendance-card span {
-    display: block;
-
-    font-family: Arial, sans-serif;
-
-    font-size: 9px;
-
-    color: #777;
-
-    text-transform: uppercase;
-
-    margin-bottom: 5px;
-}
-
-.attendance-card strong {
-    color: #641c2b;
-
-    font-size: 20px;
 }
 
 
 /* =========================================================
-   COMMENT GENERATOR
+   ACTIONS
 ========================================================= */
 
-.comment-tools {
-    display: flex;
+.form-actions {
 
-    gap: 8px;
-
-    flex-wrap: wrap;
-
-    margin-top: 10px;
-}
-
-.comment-tools button {
-    border: none;
-
-    cursor: pointer;
-}
-
-
-/* =========================================================
-   HELP TEXT
-========================================================= */
-
-.help-text {
-    display: block;
-
-    margin-top: 6px;
-
-    color: #888;
-
-    font-family: Arial, sans-serif;
-
-    font-size: 10px;
-}
-
-
-/* =========================================================
-   READ-ONLY
-========================================================= */
-
-.locked-notice {
-    background: #f3eee7;
-
-    border-left: 4px solid #b58a3a;
-
-    padding: 14px 16px;
-
-    margin-bottom: 20px;
-
-    color: #5c514b;
-
-    font-family: Arial, sans-serif;
-
-    font-size: 12px;
-}
-
-
-/* =========================================================
-   ACTION BAR
-========================================================= */
-
-.action-bar {
     display: flex;
 
     align-items: center;
 
     justify-content: space-between;
 
-    gap: 12px;
+    gap: 10px;
 
-    flex-wrap: wrap;
+    padding:
+        18px 21px;
 
-    margin-top: 25px;
+    background: #f7f7f4;
+
+    border-top:
+        1px solid
+        #e5e4df;
+
 }
+
 
 .action-left,
 .action-right {
+
     display: flex;
 
     gap: 8px;
 
-    flex-wrap: wrap;
+}
+
+
+.btn {
+
+    border: 0;
+
+    padding:
+        11px 15px;
+
+    font-family: inherit;
+
+    font-size: 9px;
+
+    font-weight: bold;
+
+    text-decoration: none;
+
+    cursor: pointer;
+
+    border-radius: 3px;
+
+}
+
+
+.btn-save {
+
+    background: #455a64;
+
+    color: #ffffff;
+
+}
+
+
+.btn-save:hover {
+
+    background: #263238;
+
+}
+
+
+.btn-submit {
+
+    background: #657d70;
+
+    color: #ffffff;
+
+}
+
+
+.btn-submit:hover {
+
+    background: #50665a;
+
+}
+
+
+.btn-cancel {
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #d4d3ce;
+
+    color: #68757a;
+
+}
+
+
+/* =========================================================
+   LOCKED
+========================================================= */
+
+.locked {
+
+    padding: 13px 15px;
+
+    background: #f1f2f1;
+
+    border:
+        1px solid
+        #dedfdd;
+
+    color: #69777c;
+
+    font-size: 9px;
+
+    line-height: 1.6;
+
 }
 
 
@@ -1286,34 +1991,129 @@ $statusClass =
    RESPONSIVE
 ========================================================= */
 
-@media (max-width: 800px) {
+@media(max-width:1000px) {
 
-    .student-header {
-        flex-direction: column;
+    .form-grid {
 
-        text-align: center;
-    }
+        grid-template-columns:
+            repeat(2, 1fr);
 
-    .report-status {
-        margin-left: 0;
-
-        text-align: center;
-    }
-
-    .performance-summary {
-        grid-template-columns: 1fr;
-    }
-
-    .attendance-preview {
-        grid-template-columns: 1fr 1fr;
     }
 
 }
 
-@media (max-width: 500px) {
 
-    .attendance-preview {
+@media(max-width:700px) {
+
+    .sidebar {
+
+        position: static;
+
+        width: 100%;
+
+        height: auto;
+
+        padding: 15px;
+
+    }
+
+    .brand {
+
+        padding-bottom: 15px;
+
+        margin-bottom: 12px;
+
+    }
+
+    .nav-title {
+
+        display: none;
+
+    }
+
+    .nav-link {
+
+        display: inline-block;
+
+        padding: 8px 9px;
+
+        margin-right: 3px;
+
+    }
+
+    .sidebar-bottom {
+
+        position: static;
+
+        margin-top: 15px;
+
+    }
+
+    .main {
+
+        margin-left: 0;
+
+    }
+
+    .topbar {
+
+        padding:
+            0 18px;
+
+    }
+
+    .content {
+
+        padding:
+            22px 15px;
+
+    }
+
+    .page-header {
+
+        display: block;
+
+    }
+
+    .back {
+
+        margin-top: 12px;
+
+    }
+
+    .form-grid {
+
         grid-template-columns: 1fr;
+
+    }
+
+    .comments-grid {
+
+        grid-template-columns: 1fr;
+
+    }
+
+    .form-actions {
+
+        flex-direction: column;
+
+        align-items: stretch;
+
+    }
+
+    .action-left,
+    .action-right {
+
+        width: 100%;
+
+    }
+
+    .btn {
+
+        flex: 1;
+
+        text-align: center;
+
     }
 
 }
@@ -1327,1119 +2127,1129 @@ $statusClass =
 
 
 <!-- =====================================================
-     HEADER
-===================================================== -->
+     SIDEBAR
+====================================================== -->
 
-<header class="hibs-header">
+<aside class="sidebar">
+
 
     <div class="brand">
 
-        <div class="brand-mark">
-            H
+        <div class="brand-title">
+            HIBS REPORTS
         </div>
 
-        <div class="brand-text">
-
-            <h1>
-                HIBS REPORTS
-            </h1>
-
-            <span>
-                HILLTOP INTERNATIONAL BRITISH SCHOOL
-            </span>
-
+        <div class="brand-subtitle">
+            HILLTOP INTERNATIONAL<br>
+            BRITISH SCHOOL
         </div>
 
     </div>
 
 
-    <div class="top-user">
+    <div class="nav-title">
+        Administration
+    </div>
 
-        <strong>
-            <?= htmlspecialchars(
-                $_SESSION["full_name"] ?? "Administrator"
-            ) ?>
-        </strong>
+
+    <a
+        href="dashboard.php"
+        class="nav-link"
+    >
+        Dashboard
+    </a>
+
+
+    <a
+        href="reports.php"
+        class="nav-link active"
+    >
+        Reports
+    </a>
+
+
+    <a
+        href="students.php"
+        class="nav-link"
+    >
+        Students
+    </a>
+
+
+    <a
+        href="classes.php"
+        class="nav-link"
+    >
+        Classes
+    </a>
+
+
+    <a
+        href="subjects.php"
+        class="nav-link"
+    >
+        Subjects
+    </a>
+
+
+    <a
+        href="academic_years.php"
+        class="nav-link"
+    >
+        Academic Years
+    </a>
+
+
+    <div class="sidebar-bottom">
 
         <a
             href="../logout.php"
-            class="logout-link"
+            class="logout"
         >
-            Sign out
+            Sign Out
         </a>
 
     </div>
 
-</header>
 
-
-<!-- =====================================================
-     NAVIGATION
-===================================================== -->
-
-<nav class="hibs-nav">
-
-    <a href="dashboard.php">
-        Dashboard
-    </a>
-
-    <a href="students.php">
-        Students
-    </a>
-
-    <a href="classes.php">
-        Classes
-    </a>
-
-    <a href="subjects.php">
-        Subjects
-    </a>
-
-    <a href="teachers.php">
-        Teachers
-    </a>
-
-    <a href="academic_years.php">
-        Academic Years
-    </a>
-
-    <a href="terms.php">
-        Terms
-    </a>
-
-    <a href="class_subjects.php">
-        Class Subjects
-    </a>
-
-    <a href="assessments.php">
-        Assessments
-    </a>
-
-    <a href="subject_assessments.php">
-        Assessment Setup
-    </a>
-
-    <a href="grades.php">
-        Grades
-    </a>
-
-    <a href="marks.php">
-        Marks
-    </a>
-
-    <a href="results.php">
-        Results
-    </a>
-
-    <a
-        href="report_cards.php"
-        class="active"
-    >
-        Report Cards
-    </a>
-
-    <a href="attendance.php">
-        Attendance
-    </a>
-
-    <a href="reports.php">
-        Reports
-    </a>
-
-    <a href="settings.php">
-        Settings
-    </a>
-
-</nav>
+</aside>
 
 
 <!-- =====================================================
      MAIN
-===================================================== -->
+====================================================== -->
 
-<main class="page">
-
-<div class="details-container">
+<div class="main">
 
 
-    <!-- =================================================
-         PAGE HEADING
-    ================================================== -->
+    <header class="topbar">
 
-    <div class="page-heading">
 
-        <div>
+        <div class="topbar-title">
+            Report Details
+        </div>
 
-            <h2>
-                Report Details
-            </h2>
 
-            <p>
+        <div class="topbar-right">
 
-                <?= htmlspecialchars(
-                    $term["academic_year"]
+            <div class="admin-name">
+
+                <?= h(
+                    $_SESSION["name"]
+                    ??
+                    $_SESSION["username"]
+                    ??
+                    "Administrator"
                 ) ?>
 
-                &nbsp;·&nbsp;
+            </div>
 
-                <?= htmlspecialchars(
-                    $term["term_name"]
+        </div>
+
+
+    </header>
+
+
+    <main class="content">
+
+
+        <!-- =================================================
+             PAGE HEADER
+        ================================================== -->
+
+        <section class="page-header">
+
+
+            <div>
+
+                <h1>
+                    Academic Report
+                </h1>
+
+                <p>
+                    Complete and maintain the student's
+                    official academic report.
+                </p>
+
+            </div>
+
+
+            <a
+                href="reports.php"
+                class="back"
+            >
+                ← Back to Reports
+            </a>
+
+
+        </section>
+
+
+        <!-- =================================================
+             MESSAGES
+        ================================================== -->
+
+        <?php if (
+            $success !== ""
+        ): ?>
+
+            <div class="alert alert-success">
+
+                <?= h(
+                    $success
                 ) ?>
 
-            </p>
+            </div>
 
-        </div>
-
-    </div>
-
-
-    <!-- =================================================
-         MESSAGES
-    ================================================== -->
-
-    <?php if ($message): ?>
-
-        <div class="alert alert-success">
-
-            <?= htmlspecialchars(
-                $message
-            ) ?>
-
-        </div>
-
-    <?php endif; ?>
-
-
-    <?php if ($error): ?>
-
-        <div class="alert alert-danger">
-
-            <?= htmlspecialchars(
-                $error
-            ) ?>
-
-        </div>
-
-    <?php endif; ?>
-
-
-    <!-- =================================================
-         STUDENT HEADER
-    ================================================== -->
-
-    <div class="student-header">
+        <?php endif; ?>
 
 
         <?php if (
-            !empty($student["photo"])
+            $error !== ""
         ): ?>
 
-            <img
-                src="../uploads/students/<?= htmlspecialchars(
-                    $student["photo"]
-                ) ?>"
-                class="student-photo"
-                alt="Student photograph"
-            >
+            <div class="alert alert-error">
 
-        <?php else: ?>
+                <?= h(
+                    $error
+                ) ?>
 
-            <div class="student-photo-placeholder">
-                NO PHOTO
             </div>
 
         <?php endif; ?>
 
 
-        <div>
+        <?php if (
+            $report
+        ): ?>
 
-            <h2>
 
-                <?= htmlspecialchars(
-                    $student["first_name"]
-                ) ?>
+            <!-- =================================================
+                 STATUS
+            ================================================== -->
+
+            <div class="status-box">
+
+
+                <div>
+
+                    <div class="status-label">
+                        Report Status
+                    </div>
+
+                </div>
+
+
+                <span
+                    class="status <?= h(
+                        $statusClass
+                    ) ?>"
+                >
+
+                    <?= h(
+                        $status
+                    ) ?>
+
+                </span>
+
+
+            </div>
+
+
+            <!-- =================================================
+                 STUDENT
+            ================================================== -->
+
+            <section class="student-card">
+
 
                 <?php if (
-                    !empty($student["middle_name"])
+                    $photoPath !== ""
                 ): ?>
 
-                    <?= htmlspecialchars(
-                        " " .
-                        $student["middle_name"]
-                    ) ?>
+                    <img
+                        src="<?= h(
+                            $photoPath
+                        ) ?>"
+                        class="student-photo"
+                        alt="Student photograph"
+                    >
+
+                <?php else: ?>
+
+                    <div
+                        class="photo-placeholder"
+                    >
+                        STUDENT<br>
+                        PHOTO
+                    </div>
 
                 <?php endif; ?>
 
-                <?= htmlspecialchars(
-                    " " .
-                    $student["last_name"]
-                ) ?>
 
-            </h2>
+                <div>
 
+                    <h2 class="student-name">
 
-            <p>
+                        <?= h(
+                            $studentName
+                        ) ?>
 
-                <strong>
-                    Student ID:
-                </strong>
-
-                <?= htmlspecialchars(
-                    $student["student_id"]
-                ) ?>
-
-            </p>
+                    </h2>
 
 
-            <p>
+                    <div class="student-meta">
 
-                <strong>
-                    Class:
-                </strong>
-
-                <?= htmlspecialchars(
-                    $student["class_name"]
-                ) ?>
-
-            </p>
-
-
-            <p>
-
-                <strong>
-                    Academic Year:
-                </strong>
-
-                <?= htmlspecialchars(
-                    $term["academic_year"]
-                ) ?>
-
-                &nbsp;|&nbsp;
-
-                <strong>
-                    Term:
-                </strong>
-
-                <?= htmlspecialchars(
-                    $term["term_name"]
-                ) ?>
-
-            </p>
-
-        </div>
+                        <span>
+                            Student ID:
+                            <strong>
+                                <?= h(
+                                    $report[
+                                        "student_number"
+                                    ]
+                                ) ?>
+                            </strong>
+                        </span>
 
 
-        <div class="report-status">
+                        <span>
+                            Class:
+                            <strong>
+                                <?= h(
+                                    $report[
+                                        "class_name"
+                                    ]
+                                ) ?>
+                            </strong>
+                        </span>
 
-            <span class="status-label">
-                Report Status
-            </span>
+
+                        <span>
+                            Academic Year:
+                            <strong>
+                                <?= h(
+                                    $report[
+                                        "academic_year"
+                                    ]
+                                ) ?>
+                            </strong>
+                        </span>
 
 
-            <span
-                class="status-badge status-<?= htmlspecialchars(
-                    $statusClass
-                ) ?>"
+                        <span>
+                            Term:
+                            <strong>
+                                <?= h(
+                                    $report[
+                                        "term_name"
+                                    ]
+                                ) ?>
+                            </strong>
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+            </section>
+
+
+            <!-- =================================================
+                 REPORT FORM
+            ================================================== -->
+
+            <form
+                method="POST"
+                autocomplete="off"
             >
 
-                <?= htmlspecialchars(
-                    $reportStatus
-                ) ?>
 
-            </span>
+                <!-- =================================================
+                     ACADEMIC SUMMARY
+                ================================================== -->
 
-        </div>
+                <section class="panel">
 
-    </div>
 
+                    <div class="panel-header">
 
-    <!-- =================================================
-         PERFORMANCE
-    ================================================== -->
+                        <h2>
+                            Academic Summary
+                        </h2>
 
-    <div class="details-panel">
+                        <p>
+                            Enter the overall academic performance.
+                        </p>
 
-        <h3>
-            Academic Performance Summary
-        </h3>
+                    </div>
 
 
-        <div class="performance-summary">
+                    <div class="form-body">
 
 
-            <div class="performance-card">
+                        <div class="form-grid">
 
-                <span>
-                    Overall Average
-                </span>
 
-                <strong>
+                            <div class="field">
 
-                    <?= $overall
-                        ? number_format(
-                            (float)$overall["average_score"],
-                            2
-                        ) . "%"
-                        : "N/A"
-                    ?>
+                                <label>
+                                    Overall Average (%)
+                                </label>
 
-                </strong>
+                                <input
+                                    type="number"
+                                    name="average_score"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    value="<?= h(
+                                        $report[
+                                            "average_score"
+                                        ]
+                                        ?? ""
+                                    ) ?>"
+                                    placeholder="e.g. 78.50"
+                                >
 
-            </div>
+                            </div>
 
 
-            <div class="performance-card">
+                            <div class="field">
 
-                <span>
-                    Position
-                </span>
+                                <label>
+                                    Position
+                                </label>
 
-                <strong>
+                                <input
+                                    type="text"
+                                    name="position"
+                                    value="<?= h(
+                                        $report[
+                                            "position"
+                                        ]
+                                        ?? ""
+                                    ) ?>"
+                                    placeholder="e.g. 5"
+                                >
 
-                    <?= htmlspecialchars(
-                        $positionText
-                    ) ?>
+                            </div>
 
-                </strong>
 
-            </div>
+                            <div class="field">
 
+                                <label>
+                                    Class Size
+                                </label>
 
-            <div class="performance-card">
+                                <input
+                                    type="number"
+                                    name="class_size"
+                                    min="1"
+                                    value="<?= h(
+                                        $report[
+                                            "class_size"
+                                        ]
+                                        ?? ""
+                                    ) ?>"
+                                    placeholder="e.g. 32"
+                                >
 
-                <span>
-                    Total Score
-                </span>
+                            </div>
 
-                <strong>
 
-                    <?= $overall
-                        ? number_format(
-                            (float)$overall["total_score"],
-                            2
-                        )
-                        : "N/A"
-                    ?>
+                        </div>
 
-                </strong>
 
-            </div>
+                    </div>
 
-        </div>
 
+                </section>
 
-        <?php if (!$overall): ?>
 
-            <div class="alert alert-danger">
+                <!-- =================================================
+                     SUBJECT RESULTS
+                ================================================== -->
 
-                No calculated academic result exists
-                for this student and term.
+                <section class="panel">
 
-                Please calculate the student's results
-                before finalising this report.
 
-            </div>
+                    <div class="panel-header">
 
-        <?php endif; ?>
+                        <h2>
+                            Subject Results
+                        </h2>
 
-    </div>
+                        <p>
+                            Enter the student's subject scores,
+                            grades and comments.
+                        </p>
 
+                    </div>
 
-    <!-- =================================================
-         LOCKED NOTICE
-    ================================================== -->
 
-    <?php if (
-        $reportStatus === "Published"
-    ): ?>
+                    <?php if (
+                        $resultTableExists
+                    ): ?>
 
-        <div class="locked-notice">
 
-            <strong>
-                This report is published.
-            </strong>
+                        <div class="table-wrap">
 
-            Published reports are locked and cannot
-            be edited from this page.
 
-        </div>
+                            <table
+                                class="results-table"
+                            >
 
-    <?php endif; ?>
 
+                                <thead>
 
-    <!-- =================================================
-         FORM
-    ================================================== -->
+                                <tr>
 
-    <form
-        method="POST"
-        autocomplete="off"
-    >
+                                    <th
+                                        style="width:28%;"
+                                    >
+                                        Subject
+                                    </th>
 
-        <input
-            type="hidden"
-            name="csrf_token"
-            value="<?= htmlspecialchars(
-                $csrfToken
-            ) ?>"
-        >
+                                    <th
+                                        style="width:15%;"
+                                    >
+                                        Score
+                                    </th>
 
+                                    <th
+                                        style="width:15%;"
+                                    >
+                                        Grade
+                                    </th>
 
-        <!-- =============================================
-             ATTENDANCE
-        ============================================== -->
+                                    <th>
+                                        Comment
+                                    </th>
 
-        <div class="details-panel">
+                                </tr>
 
-            <h3>
-                Attendance
-            </h3>
+                                </thead>
 
 
-            <div class="form-grid">
+                                <tbody>
 
 
-                <div class="form-group">
+                                <?php foreach (
+                                    $subjects
+                                    as $subject
+                                ): ?>
 
-                    <label>
-                        Days School Opened
-                    </label>
 
-                    <input
-                        type="number"
-                        name="days_opened"
-                        min="0"
-                        max="366"
-                        value="<?= $daysOpened ?>"
-                        <?= $reportStatus === "Published"
-                            ? "disabled"
-                            : "" ?>
-                        required
-                    >
+                                    <?php
 
-                    <span class="help-text">
-                        Enter the total number of school days
-                        for this term.
-                    </span>
+                                    $subjectId =
+                                        (int)$subject["id"];
 
-                </div>
 
+                                    $result =
+                                        $resultBySubject[
+                                            $subjectId
+                                        ]
+                                        ?? [];
 
-                <div class="form-group">
 
-                    <label>
-                        Days Present
-                    </label>
+                                    ?>
 
-                    <input
-                        type="number"
-                        name="days_present"
-                        min="0"
-                        max="366"
-                        value="<?= $daysPresent ?>"
-                        <?= $reportStatus === "Published"
-                            ? "disabled"
-                            : "" ?>
-                        required
-                    >
 
-                    <span class="help-text">
-                        Days the student was present.
-                    </span>
+                                    <tr>
 
-                </div>
 
+                                        <td>
 
-                <div class="form-group">
+                                            <div
+                                                class="subject-name"
+                                            >
 
-                    <label>
-                        Days Absent
-                    </label>
+                                                <?= h(
+                                                    $subject[
+                                                        "subject_name"
+                                                    ]
+                                                ) ?>
 
-                    <input
-                        type="number"
-                        value="<?= $daysAbsent ?>"
-                        disabled
-                    >
+                                            </div>
 
-                    <span class="help-text">
-                        Automatically calculated as
-                        opened minus present.
-                    </span>
+                                        </td>
 
-                </div>
 
-            </div>
+                                        <td>
 
+                                            <input
+                                                type="number"
+                                                name="subject_score[<?= $subjectId ?>]"
+                                                min="0"
+                                                max="100"
+                                                step="0.01"
+                                                value="<?= h(
+                                                    $result[
+                                                        "score"
+                                                    ]
+                                                    ?? ""
+                                                ) ?>"
+                                            >
 
-            <div class="attendance-preview">
+                                        </td>
 
-                <div class="attendance-card">
 
-                    <span>
-                        Opened
-                    </span>
+                                        <td>
 
-                    <strong>
-                        <?= $daysOpened ?>
-                    </strong>
+                                            <input
+                                                type="text"
+                                                name="subject_grade[<?= $subjectId ?>]"
+                                                maxlength="10"
+                                                value="<?= h(
+                                                    $result[
+                                                        "grade"
+                                                    ]
+                                                    ?? ""
+                                                ) ?>"
+                                                placeholder="A"
+                                            >
 
-                </div>
+                                        </td>
 
 
-                <div class="attendance-card">
+                                        <td>
 
-                    <span>
-                        Present
-                    </span>
+                                            <input
+                                                type="text"
+                                                name="subject_comment[<?= $subjectId ?>]"
+                                                value="<?= h(
+                                                    $result[
+                                                        "comment"
+                                                    ]
+                                                    ?? ""
+                                                ) ?>"
+                                                placeholder="Subject comment"
+                                            >
 
-                    <strong>
-                        <?= $daysPresent ?>
-                    </strong>
+                                        </td>
 
-                </div>
 
+                                    </tr>
 
-                <div class="attendance-card">
 
-                    <span>
-                        Absent
-                    </span>
+                                <?php endforeach; ?>
 
-                    <strong>
-                        <?= $daysAbsent ?>
-                    </strong>
 
-                </div>
+                                </tbody>
 
 
-                <div class="attendance-card">
+                            </table>
 
-                    <span>
-                        Attendance
-                    </span>
 
-                    <strong>
+                        </div>
 
-                        <?= number_format(
-                            $attendancePercentage,
-                            1
-                        ) ?>%
 
-                    </strong>
+                    <?php else: ?>
 
-                </div>
 
-            </div>
-
-        </div>
-
-
-        <!-- =============================================
-             CONDUCT
-        ============================================== -->
-
-        <div class="details-panel">
-
-            <h3>
-                Conduct & Behaviour
-            </h3>
-
-
-            <div class="form-group">
-
-                <label>
-                    Conduct Rating
-                </label>
-
-                <select
-                    name="conduct"
-                    <?= $reportStatus === "Published"
-                        ? "disabled"
-                        : "" ?>
-                    required
-                >
-
-                    <option value="">
-                        Select Conduct Rating
-                    </option>
-
-                    <?php
-
-                    $conductOptions = [
-                        "Excellent",
-                        "Very Good",
-                        "Good",
-                        "Satisfactory",
-                        "Needs Improvement"
-                    ];
-
-                    foreach (
-                        $conductOptions
-                        as $option
-                    ):
-
-                    ?>
-
-                        <option
-                            value="<?= htmlspecialchars(
-                                $option
-                            ) ?>"
-                            <?= $conduct === $option
-                                ? "selected"
-                                : "" ?>
+                        <div
+                            class="form-body"
                         >
 
-                            <?= htmlspecialchars(
-                                $option
-                            ) ?>
+                            <div class="locked">
 
-                        </option>
+                                The subject-results table
+                                <strong>
+                                    report_card_results
+                                </strong>
+                                has not yet been created in
+                                the HIBS database.
 
-                    <?php endforeach; ?>
+                                The overall report information
+                                can still be saved, but subject
+                                results require that table.
 
-                </select>
+                            </div>
 
-            </div>
+                        </div>
 
-        </div>
 
+                    <?php endif; ?>
 
-        <!-- =============================================
-             TEACHER COMMENT
-        ============================================== -->
 
-        <div class="details-panel">
+                </section>
 
-            <h3>
-                Teacher's Comment
-            </h3>
 
+                <!-- =================================================
+                     ATTENDANCE
+                ================================================== -->
 
-            <div class="form-group">
+                <section class="panel">
 
-                <label>
-                    Comment
-                </label>
 
-                <textarea
-                    id="teacher_comment"
-                    name="teacher_comment"
-                    rows="6"
-                    <?= $reportStatus === "Published"
-                        ? "disabled"
-                        : "" ?>
-                    placeholder="Enter the class teacher's comment..."
-                ><?= htmlspecialchars(
-                    $teacherComment
-                ) ?></textarea>
+                    <div class="panel-header">
 
-            </div>
+                        <h2>
+                            Attendance & Conduct
+                        </h2>
 
+                        <p>
+                            Enter attendance and general
+                            behavioural information.
+                        </p>
 
-            <?php if (
-                $reportStatus !== "Published"
-            ): ?>
+                    </div>
 
-                <div class="comment-tools">
 
-                    <button
-                        type="button"
-                        class="btn btn-gold"
-                        onclick="useAutomaticComment()"
-                    >
-                        Use Automatic Comment
-                    </button>
+                    <div class="form-body">
 
-                    <button
-                        type="button"
-                        class="btn btn-light"
-                        onclick="clearTeacherComment()"
-                    >
-                        Clear
-                    </button>
 
-                </div>
+                        <div class="form-grid">
 
-            <?php endif; ?>
 
+                            <div class="field">
 
-            <span class="help-text">
+                                <label>
+                                    Days School Opened
+                                </label>
 
-                Suggested comment based on the current
-                academic average:
+                                <input
+                                    type="number"
+                                    name="days_opened"
+                                    min="0"
+                                    value="<?= h(
+                                        $report[
+                                            "days_opened"
+                                        ]
+                                        ?? ""
+                                    ) ?>"
+                                    placeholder="e.g. 120"
+                                >
 
-                <?= number_format(
-                    $average,
-                    2
-                ) ?>%
+                            </div>
 
-            </span>
 
-        </div>
+                            <div class="field">
 
+                                <label>
+                                    Days Present
+                                </label>
 
-        <!-- =============================================
-             HEADTEACHER COMMENT
-        ============================================== -->
+                                <input
+                                    type="number"
+                                    name="days_present"
+                                    min="0"
+                                    value="<?= h(
+                                        $report[
+                                            "days_present"
+                                        ]
+                                        ?? ""
+                                    ) ?>"
+                                    placeholder="e.g. 114"
+                                >
 
-        <div class="details-panel">
+                            </div>
 
-            <h3>
-                Headteacher's Comment
-            </h3>
 
+                            <div class="field">
 
-            <div class="form-group">
-
-                <label>
-                    <?= htmlspecialchars(
-                        $principalTitle
-                    ) ?>'s Comment
-                </label>
-
-                <textarea
-                    name="headteacher_comment"
-                    rows="6"
-                    <?= $reportStatus === "Published"
-                        ? "disabled"
-                        : "" ?>
-                    placeholder="Enter the headteacher's comment..."
-                ><?= htmlspecialchars(
-                    $headteacherComment
-                ) ?></textarea>
+                                <label>
+                                    Days Absent
+                                </label>
 
-            </div>
+                                <input
+                                    type="number"
+                                    name="days_absent"
+                                    value="<?= h(
+                                        $report[
+                                            "days_absent"
+                                        ]
+                                        ?? ""
+                                    ) ?>"
+                                    readonly
+                                >
 
-        </div>
+                            </div>
 
 
-        <!-- =============================================
-             PROMOTION
-        ============================================== -->
+                            <div class="field">
 
-        <div class="details-panel">
+                                <label>
+                                    Conduct
+                                </label>
 
-            <h3>
-                Promotion Decision
-            </h3>
+                                <select
+                                    name="conduct"
+                                >
 
+                                    <option value="">
+                                        Select Conduct
+                                    </option>
 
-            <div class="form-group">
+                                    <?php
 
-                <label>
-                    Promotion Status
-                </label>
+                                    $conductOptions = [
 
-                <select
-                    name="promotion_status"
-                    <?= $reportStatus === "Published"
-                        ? "disabled"
-                        : "" ?>
-                    required
-                >
+                                        "Excellent",
+                                        "Very Good",
+                                        "Good",
+                                        "Satisfactory",
+                                        "Needs Improvement"
 
-                    <option value="">
-                        Select Promotion Status
-                    </option>
+                                    ];
 
-                    <option
-                        value="Promoted"
-                        <?= $promotionStatus === "Promoted"
-                            ? "selected"
-                            : "" ?>
-                    >
-                        Promoted
-                    </option>
+                                    ?>
 
-                    <option
-                        value="Conditional"
-                        <?= $promotionStatus === "Conditional"
-                            ? "selected"
-                            : "" ?>
-                    >
-                        Conditional Promotion
-                    </option>
 
-                    <option
-                        value="Not Promoted"
-                        <?= $promotionStatus === "Not Promoted"
-                            ? "selected"
-                            : "" ?>
-                    >
-                        Not Promoted
-                    </option>
+                                    <?php foreach (
+                                        $conductOptions
+                                        as $option
+                                    ): ?>
 
-                    <option
-                        value="Pending"
-                        <?= $promotionStatus === "Pending"
-                            ? "selected"
-                            : "" ?>
-                    >
-                        Pending
-                    </option>
+                                        <option
+                                            value="<?= h(
+                                                $option
+                                            ) ?>"
+                                            <?= (
+                                                ($report[
+                                                    "conduct"
+                                                ] ?? "")
+                                                ===
+                                                $option
+                                            )
+                                                ? "selected"
+                                                : ""
+                                            ?>
+                                        >
 
-                </select>
+                                            <?= h(
+                                                $option
+                                            ) ?>
 
-            </div>
+                                        </option>
 
+                                    <?php endforeach; ?>
 
-            <div class="locked-notice">
+                                </select>
 
-                <strong>
-                    System recommendation:
-                </strong>
+                            </div>
 
-                <?= htmlspecialchars(
-                    $automaticPromotion
-                ) ?>
 
-                <br><br>
+                            <div class="field">
 
-                <small>
+                                <label>
+                                    Promotion Status
+                                </label>
 
-                    This is only a recommendation.
-                    The administrator has the final authority
-                    to select the official promotion status.
+                                <select
+                                    name="promotion_status"
+                                >
 
-                </small>
+                                    <option value="">
+                                        Select Status
+                                    </option>
 
-            </div>
+                                    <?php
 
-        </div>
+                                    $promotionOptions = [
 
+                                        "Promoted",
+                                        "Promoted on Trial",
+                                        "Not Promoted",
+                                        "Graduated"
 
-        <!-- =============================================
-             ACTIONS
-        ============================================== -->
+                                    ];
 
-        <div class="action-bar">
+                                    ?>
 
 
-            <div class="action-left">
+                                    <?php foreach (
+                                        $promotionOptions
+                                        as $option
+                                    ): ?>
 
-                <a
-                    href="report_cards.php?class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
-                    class="btn btn-light"
-                >
-                    ← Back to Reports
-                </a>
+                                        <option
+                                            value="<?= h(
+                                                $option
+                                            ) ?>"
+                                            <?= (
+                                                ($report[
+                                                    "promotion_status"
+                                                ] ?? "")
+                                                ===
+                                                $option
+                                            )
+                                                ? "selected"
+                                                : ""
+                                            ?>
+                                        >
 
+                                            <?= h(
+                                                $option
+                                            ) ?>
 
-                <?php if (
-                    $reportStatus !== "Published"
-                ): ?>
+                                        </option>
 
-                    <button
-                        type="submit"
-                        class="btn btn-primary"
-                    >
-                        Save Report Details
-                    </button>
+                                    <?php endforeach; ?>
 
-                <?php endif; ?>
+                                </select>
 
-            </div>
+                            </div>
 
 
-            <div class="action-right">
+                        </div>
 
 
-                <a
-                    href="../student_report.php?student_id=<?= $student_id ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
-                    class="btn btn-gold"
-                    target="_blank"
-                >
-                    Preview Report
-                </a>
+                    </div>
 
 
-                <a
-                    href="../student_report.php?student_id=<?= $student_id ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>&print=1"
-                    class="btn btn-primary"
-                    target="_blank"
-                >
-                    Print / PDF
-                </a>
+                </section>
 
-            </div>
 
-        </div>
+                <!-- =================================================
+                     COMMENTS
+                ================================================== -->
 
+                <section class="panel">
 
-    </form>
+
+                    <div class="panel-header">
+
+                        <h2>
+                            Report Comments
+                        </h2>
+
+                        <p>
+                            Add the official comments that will
+                            appear on the student's report.
+                        </p>
+
+                    </div>
+
+
+                    <div class="form-body">
+
+
+                        <div class="comments-grid">
+
+
+                            <div class="field">
+
+                                <label>
+                                    Class Teacher's Comment
+                                </label>
+
+                                <textarea
+                                    name="teacher_comment"
+                                    placeholder="Enter the class teacher's comment..."
+                                ><?= h(
+                                    $report[
+                                        "teacher_comment"
+                                    ]
+                                    ?? ""
+                                ) ?></textarea>
+
+                            </div>
+
+
+                            <div class="field">
+
+                                <label>
+                                    Headteacher's Comment
+                                </label>
+
+                                <textarea
+                                    name="headteacher_comment"
+                                    placeholder="Enter the headteacher's comment..."
+                                ><?= h(
+                                    $report[
+                                        "headteacher_comment"
+                                    ]
+                                    ?? ""
+                                ) ?></textarea>
+
+                            </div>
+
+
+                        </div>
+
+
+                    </div>
+
+
+                </section>
+
+
+                <!-- =================================================
+                     ACTIONS
+                ================================================== -->
+
+                <section class="panel">
+
+
+                    <div class="form-actions">
+
+
+                        <div class="action-left">
+
+                            <a
+                                href="reports.php"
+                                class="btn btn-cancel"
+                            >
+                                Cancel
+                            </a>
+
+                        </div>
+
+
+                        <div class="action-right">
+
+
+                            <?php if (
+                                $status === "Draft"
+                            ): ?>
+
+
+                                <button
+                                    type="submit"
+                                    name="action"
+                                    value="save"
+                                    class="btn btn-save"
+                                >
+                                    Save Draft
+                                </button>
+
+
+                                <button
+                                    type="submit"
+                                    name="action"
+                                    value="submit"
+                                    class="btn btn-submit"
+                                >
+                                    Save for Approval
+                                </button>
+
+
+                            <?php else: ?>
+
+
+                                <button
+                                    type="submit"
+                                    name="action"
+                                    value="save"
+                                    class="btn btn-save"
+                                >
+                                    Save Changes
+                                </button>
+
+
+                            <?php endif; ?>
+
+
+                        </div>
+
+
+                    </div>
+
+
+                </section>
+
+
+            </form>
+
+
+        <?php endif; ?>
+
+
+    </main>
 
 
 </div>
-
-</main>
 
 
 <script>
 
 /*
 |--------------------------------------------------------------------------
-| AUTOMATIC TEACHER COMMENT
+| AUTOMATIC ABSENCE CALCULATION
 |--------------------------------------------------------------------------
 */
 
-const automaticComment =
-<?= json_encode(
-    $automaticComment,
-    JSON_HEX_TAG |
-    JSON_HEX_APOS |
-    JSON_HEX_QUOT |
-    JSON_HEX_AMP
-) ?>;
-
-
-function useAutomaticComment() {
-
-    const textarea =
-        document.getElementById(
-            "teacher_comment"
-        );
-
-    if (!textarea) {
-        return;
-    }
-
-
-    if (
-        textarea.value.trim() !== ""
-    ) {
-
-        const confirmed =
-            confirm(
-                "Replace the current teacher comment "
-                + "with the automatic comment?"
-            );
-
-        if (!confirmed) {
-            return;
-        }
-    }
-
-
-    textarea.value =
-        automaticComment;
-}
-
-
-function clearTeacherComment() {
-
-    const textarea =
-        document.getElementById(
-            "teacher_comment"
-        );
-
-    if (!textarea) {
-        return;
-    }
-
-
-    textarea.value = "";
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| ATTENDANCE LIVE CALCULATION
-|--------------------------------------------------------------------------
-*/
-
-const openedInput =
+const opened =
     document.querySelector(
         'input[name="days_opened"]'
     );
 
-const presentInput =
+const present =
     document.querySelector(
         'input[name="days_present"]'
     );
 
+const absent =
+    document.querySelector(
+        'input[name="days_absent"]'
+    );
 
-function updateAttendancePreview() {
+
+function calculateAbsence()
+{
 
     if (
-        !openedInput ||
-        !presentInput
+        !opened ||
+        !present ||
+        !absent
     ) {
+
         return;
     }
 
 
-    const opened =
+    const openedValue =
         parseInt(
-            openedInput.value,
+            opened.value,
             10
-        ) || 0;
+        )
+        || 0;
 
 
-    const present =
+    const presentValue =
         parseInt(
-            presentInput.value,
+            present.value,
             10
-        ) || 0;
+        )
+        || 0;
 
 
-    const absent =
-        Math.max(
-            opened - present,
-            0
-        );
+    const difference =
+        openedValue -
+        presentValue;
 
 
-    let percentage = 0;
-
-
-    if (opened > 0) {
-
-        percentage =
-            (present / opened) * 100;
-    }
-
-
-    const cards =
-        document.querySelectorAll(
-            ".attendance-card strong"
-        );
-
-
-    if (cards.length >= 4) {
-
-        cards[0].textContent =
-            opened;
-
-        cards[1].textContent =
-            present;
-
-        cards[2].textContent =
-            absent;
-
-        cards[3].textContent =
-            percentage.toFixed(1) + "%";
-    }
+    absent.value =
+        difference > 0
+            ? difference
+            : 0;
 }
 
 
-if (openedInput) {
+if (opened) {
 
-    openedInput.addEventListener(
+    opened.addEventListener(
         "input",
-        updateAttendancePreview
+        calculateAbsence
     );
+
 }
 
 
-if (presentInput) {
+if (present) {
 
-    presentInput.addEventListener(
+    present.addEventListener(
         "input",
-        updateAttendancePreview
+        calculateAbsence
     );
+
 }
 
+
+calculateAbsence();
 
 </script>
 
