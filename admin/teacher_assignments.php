@@ -1,20 +1,51 @@
 <?php
 
+declare(strict_types=1);
+
 session_start();
 
 require_once "../config/db.php";
-
-ini_set("display_errors", "0");
-error_reporting(E_ALL);
 
 
 /*
 |--------------------------------------------------------------------------
 | HIBS REPORTS
-| TEACHER CLASS / SUBJECT ASSIGNMENTS
+| TEACHER CLASS & SUBJECT ASSIGNMENTS
 |--------------------------------------------------------------------------
 */
 
+
+/*
+|--------------------------------------------------------------------------
+| ERROR HANDLING
+|--------------------------------------------------------------------------
+*/
+
+ini_set("display_errors", "1");
+ini_set("display_startup_errors", "1");
+error_reporting(E_ALL);
+
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN SECURITY
+|--------------------------------------------------------------------------
+*/
+
+if (
+    empty($_SESSION["user_id"]) ||
+    strtolower((string)($_SESSION["role"] ?? "")) !== "admin"
+) {
+    header("Location: ../login.php");
+    exit;
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
+*/
 
 function h($value): string
 {
@@ -26,28 +57,314 @@ function h($value): string
 }
 
 
+function tableExists(
+    PDO $conn,
+    string $table
+): bool {
+
+    $stmt = $conn->prepare("
+        SELECT COUNT(*)
+
+        FROM information_schema.tables
+
+        WHERE table_schema = DATABASE()
+
+        AND table_name = ?
+    ");
+
+    $stmt->execute([
+        $table
+    ]);
+
+    return (int)$stmt->fetchColumn() > 0;
+}
+
+
+function getColumns(
+    PDO $conn,
+    string $table
+): array {
+
+    $stmt = $conn->prepare("
+        SELECT column_name
+
+        FROM information_schema.columns
+
+        WHERE table_schema = DATABASE()
+
+        AND table_name = ?
+
+        ORDER BY ordinal_position
+    ");
+
+    $stmt->execute([
+        $table
+    ]);
+
+    return $stmt->fetchAll(
+        PDO::FETCH_COLUMN
+    );
+}
+
+
+function hasColumn(
+    array $columns,
+    string $column
+): bool {
+
+    return in_array(
+        $column,
+        $columns,
+        true
+    );
+}
+
+
 /*
 |--------------------------------------------------------------------------
-| ADMIN SECURITY
+| DATABASE VALIDATION
+|--------------------------------------------------------------------------
+*/
+
+$requiredTables = [
+    "teachers",
+    "classes",
+    "subjects",
+    "teacher_class_subjects"
+];
+
+
+foreach (
+    $requiredTables as $table
+) {
+
+    if (
+        !tableExists(
+            $conn,
+            $table
+        )
+    ) {
+
+        die("
+            <div style=\"
+                font-family:Arial;
+                padding:30px;
+                color:#8a4b4b;
+                background:#fff4f4;
+                border:1px solid #e3caca;
+            \">
+                <h2>HIBS Reports Database Error</h2>
+
+                <p>
+                    Required table
+                    <strong>" .
+                    h($table) .
+                    "</strong>
+                    does not exist.
+                </p>
+
+                <p>
+                    Please run the HIBS database setup before continuing.
+                </p>
+            </div>
+        ");
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| GET TABLE COLUMNS
+|--------------------------------------------------------------------------
+*/
+
+$teacherColumns =
+    getColumns(
+        $conn,
+        "teachers"
+    );
+
+$classColumns =
+    getColumns(
+        $conn,
+        "classes"
+    );
+
+$subjectColumns =
+    getColumns(
+        $conn,
+        "subjects"
+    );
+
+$assignmentColumns =
+    getColumns(
+        $conn,
+        "teacher_class_subjects"
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| VERIFY REQUIRED COLUMNS
 |--------------------------------------------------------------------------
 */
 
 if (
-    !isset($_SESSION["user_id"]) ||
-    ($_SESSION["role"] ?? "") !== "admin"
+    !hasColumn(
+        $teacherColumns,
+        "id"
+    )
 ) {
-    header("Location: ../login.php");
-    exit;
+
+    die("
+        <div style=\"
+            font-family:Arial;
+            padding:30px;
+            color:#8a4b4b;
+            background:#fff4f4;
+        \">
+
+        <h2>HIBS Reports Database Error</h2>
+
+        <p>
+            The <strong>teachers</strong> table does not contain
+            the required <strong>id</strong> column.
+        </p>
+
+        </div>
+    ");
 }
 
 
-$error = "";
-$success = "";
+if (
+    !hasColumn(
+        $classColumns,
+        "id"
+    )
+    ||
+    !hasColumn(
+        $classColumns,
+        "class_name"
+    )
+) {
+
+    die("
+        <div style=\"
+            font-family:Arial;
+            padding:30px;
+            color:#8a4b4b;
+            background:#fff4f4;
+        \">
+
+        <h2>HIBS Reports Database Error</h2>
+
+        <p>
+            The <strong>classes</strong> table must contain:
+        </p>
+
+        <p>
+            <strong>id</strong> and
+            <strong>class_name</strong>
+        </p>
+
+        </div>
+    ");
+}
+
+
+if (
+    !hasColumn(
+        $subjectColumns,
+        "id"
+    )
+    ||
+    !hasColumn(
+        $subjectColumns,
+        "subject_name"
+    )
+) {
+
+    die("
+        <div style=\"
+            font-family:Arial;
+            padding:30px;
+            color:#8a4b4b;
+            background:#fff4f4;
+        \">
+
+        <h2>HIBS Reports Database Error</h2>
+
+        <p>
+            The <strong>subjects</strong> table must contain:
+        </p>
+
+        <p>
+            <strong>id</strong> and
+            <strong>subject_name</strong>
+        </p>
+
+        </div>
+    ");
+}
+
+
+$assignmentRequired = [
+    "id",
+    "teacher_id",
+    "class_id",
+    "subject_id"
+];
+
+
+foreach (
+    $assignmentRequired as $column
+) {
+
+    if (
+        !hasColumn(
+            $assignmentColumns,
+            $column
+        )
+    ) {
+
+        die("
+            <div style=\"
+                font-family:Arial;
+                padding:30px;
+                color:#8a4b4b;
+                background:#fff4f4;
+            \">
+
+            <h2>HIBS Reports Database Error</h2>
+
+            <p>
+                The
+                <strong>teacher_class_subjects</strong>
+                table is missing:
+                <strong>" .
+                h($column) .
+                "</strong>
+            </p>
+
+            </div>
+        ");
+    }
+}
 
 
 /*
 |--------------------------------------------------------------------------
-| ADD ASSIGNMENT
+| SUCCESS / ERROR
+|--------------------------------------------------------------------------
+*/
+
+$success = "";
+$error = "";
+
+
+/*
+|--------------------------------------------------------------------------
+| ADD / DELETE ASSIGNMENT
 |--------------------------------------------------------------------------
 */
 
@@ -60,6 +377,12 @@ if (
 
 
     try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | ADD
+        |--------------------------------------------------------------------------
+        */
 
         if (
             $action ===
@@ -127,7 +450,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Teacher not found."
+                    "The selected teacher does not exist."
                 );
             }
 
@@ -159,7 +482,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Class not found."
+                    "The selected class does not exist."
                 );
             }
 
@@ -191,7 +514,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Subject not found."
+                    "The selected subject does not exist."
                 );
             }
 
@@ -204,17 +527,17 @@ if (
 
             $stmt =
                 $conn->prepare("
-                    SELECT COUNT(*)
+                    SELECT id
 
                     FROM teacher_class_subjects
 
-                    WHERE
+                    WHERE teacher_id = ?
 
-                        teacher_id = ?
+                    AND class_id = ?
 
-                        AND class_id = ?
+                    AND subject_id = ?
 
-                        AND subject_id = ?
+                    LIMIT 1
                 ");
 
             $stmt->execute([
@@ -229,8 +552,7 @@ if (
 
 
             if (
-                (int)$stmt->fetchColumn()
-                > 0
+                $stmt->fetchColumn()
             ) {
 
                 throw new Exception(
@@ -274,7 +596,7 @@ if (
 
         /*
         |--------------------------------------------------------------------------
-        | DELETE ASSIGNMENT
+        | DELETE
         |--------------------------------------------------------------------------
         */
 
@@ -296,51 +618,7 @@ if (
             ) {
 
                 throw new Exception(
-                    "Invalid assignment."
-                );
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | CHECK EXISTING MARK SUBMISSIONS
-            |--------------------------------------------------------------------------
-            */
-
-            $stmt =
-                $conn->prepare("
-                    SELECT
-
-                        COUNT(*)
-
-                    FROM mark_submissions ms
-
-                    INNER JOIN teacher_class_subjects a
-
-                        ON a.teacher_id =
-                            ms.teacher_id
-
-                        AND a.class_id =
-                            ms.class_id
-
-                        AND a.subject_id =
-                            ms.subject_id
-
-                    WHERE a.id = ?
-                ");
-
-            $stmt->execute([
-                $assignmentId
-            ]);
-
-
-            if (
-                (int)$stmt->fetchColumn()
-                > 0
-            ) {
-
-                throw new Exception(
-                    "This assignment cannot be removed because mark submissions already exist."
+                    "Invalid assignment selected."
                 );
             }
 
@@ -349,6 +627,12 @@ if (
             |--------------------------------------------------------------------------
             | DELETE
             |--------------------------------------------------------------------------
+            |
+            | We deliberately do not query mark_submissions here.
+            |
+            | The previous version assumed a particular mark_submissions
+            | structure and could therefore produce HTTP 500 errors.
+            |
             */
 
             $stmt =
@@ -363,8 +647,18 @@ if (
             ]);
 
 
+            if (
+                $stmt->rowCount() === 0
+            ) {
+
+                throw new Exception(
+                    "The assignment could not be found."
+                );
+            }
+
+
             $success =
-                "Teacher assignment removed.";
+                "Teacher assignment removed successfully.";
         }
 
 
@@ -390,35 +684,244 @@ if (
 |--------------------------------------------------------------------------
 | TEACHERS
 |--------------------------------------------------------------------------
+|
+| We do NOT assume teachers has a particular name structure.
+|
 */
 
-$stmt =
-    $conn->query("
-        SELECT
+$teachers = [];
 
-            t.id,
 
-            t.employee_id,
+try {
 
-            CONCAT_WS(
-                ' ',
-                u.first_name,
-                u.last_name
-            ) AS teacher_name
+    $stmt =
+        $conn->query("
+            SELECT *
+            FROM teachers
+            ORDER BY id DESC
+        ");
 
-        FROM teachers t
+    $teacherRows =
+        $stmt->fetchAll(
+            PDO::FETCH_ASSOC
+        );
 
-        INNER JOIN users u
-            ON u.id = t.user_id
 
-        ORDER BY
-            teacher_name ASC
-    ");
+    foreach (
+        $teacherRows as $teacher
+    ) {
 
-$teachers =
-    $stmt->fetchAll(
-        PDO::FETCH_ASSOC
+        $name = "";
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | POSSIBLE FULL NAME
+        |--------------------------------------------------------------------------
+        */
+
+        $possibleNameColumns = [
+
+            "teacher_name",
+            "name",
+            "full_name"
+
+        ];
+
+
+        foreach (
+            $possibleNameColumns
+            as $column
+        ) {
+
+            if (
+                hasColumn(
+                    $teacherColumns,
+                    $column
+                )
+                &&
+                !empty(
+                    $teacher[$column]
+                )
+            ) {
+
+                $name =
+                    trim(
+                        (string)
+                        $teacher[$column]
+                    );
+
+                break;
+            }
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | FIRST / MIDDLE / LAST
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $name === ""
+        ) {
+
+            $parts = [];
+
+
+            foreach (
+                [
+                    "first_name",
+                    "middle_name",
+                    "last_name"
+                ] as $column
+            ) {
+
+                if (
+                    hasColumn(
+                        $teacherColumns,
+                        $column
+                    )
+                    &&
+                    !empty(
+                        $teacher[$column]
+                    )
+                ) {
+
+                    $parts[] =
+                        trim(
+                            (string)
+                            $teacher[$column]
+                        );
+                }
+            }
+
+
+            if (
+                count($parts)
+            ) {
+
+                $name =
+                    implode(
+                        " ",
+                        $parts
+                    );
+            }
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | USER ID FALLBACK
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $name === ""
+            &&
+            hasColumn(
+                $teacherColumns,
+                "user_id"
+            )
+        ) {
+
+            $name =
+                "Teacher #"
+                .
+                (int)
+                $teacher["id"];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | FINAL FALLBACK
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $name === ""
+        ) {
+
+            $name =
+                "Teacher #"
+                .
+                (int)
+                $teacher["id"];
+        }
+
+
+        $employeeId = "";
+
+
+        foreach (
+            [
+                "employee_id",
+                "staff_id",
+                "teacher_id"
+            ] as $column
+        ) {
+
+            if (
+                hasColumn(
+                    $teacherColumns,
+                    $column
+                )
+                &&
+                !empty(
+                    $teacher[$column]
+                )
+            ) {
+
+                $employeeId =
+                    (string)
+                    $teacher[$column];
+
+                break;
+            }
+        }
+
+
+        $teachers[] = [
+
+            "id" =>
+                (int)
+                $teacher["id"],
+
+            "teacher_name" =>
+                $name,
+
+            "employee_id" =>
+                $employeeId
+
+        ];
+    }
+
+
+    usort(
+        $teachers,
+        function (
+            $a,
+            $b
+        ) {
+
+            return strcasecmp(
+                $a["teacher_name"],
+                $b["teacher_name"]
+            );
+        }
     );
+
+
+} catch (
+    Throwable $e
+) {
+
+    $error =
+        "Unable to load teachers: "
+        .
+        $e->getMessage();
+}
 
 
 /*
@@ -427,22 +930,34 @@ $teachers =
 |--------------------------------------------------------------------------
 */
 
-$stmt =
-    $conn->query("
-        SELECT
+$classes = [];
 
-            id,
-            class_name
 
-        FROM classes
+try {
 
-        ORDER BY class_name ASC
-    ");
+    $stmt =
+        $conn->query("
+            SELECT
+                id,
+                class_name
 
-$classes =
-    $stmt->fetchAll(
-        PDO::FETCH_ASSOC
-    );
+            FROM classes
+
+            ORDER BY class_name ASC
+        ");
+
+    $classes =
+        $stmt->fetchAll(
+            PDO::FETCH_ASSOC
+        );
+
+} catch (
+    Throwable $e
+) {
+
+    $error =
+        $e->getMessage();
+}
 
 
 /*
@@ -451,83 +966,240 @@ $classes =
 |--------------------------------------------------------------------------
 */
 
-$stmt =
-    $conn->query("
-        SELECT
+$subjects = [];
 
-            id,
-            subject_name
 
-        FROM subjects
+try {
 
-        ORDER BY subject_name ASC
-    ");
+    $stmt =
+        $conn->query("
+            SELECT
+                id,
+                subject_name
 
-$subjects =
-    $stmt->fetchAll(
-        PDO::FETCH_ASSOC
-    );
+            FROM subjects
+
+            ORDER BY subject_name ASC
+        ");
+
+    $subjects =
+        $stmt->fetchAll(
+            PDO::FETCH_ASSOC
+        );
+
+} catch (
+    Throwable $e
+) {
+
+    $error =
+        $e->getMessage();
+}
 
 
 /*
 |--------------------------------------------------------------------------
-| ASSIGNMENTS
+| CURRENT ASSIGNMENTS
 |--------------------------------------------------------------------------
 */
 
-$stmt =
-    $conn->query("
-        SELECT
+$assignments = [];
 
-            a.id,
 
-            a.teacher_id,
+try {
 
-            a.class_id,
+    /*
+    |--------------------------------------------------------------------------
+    | Fetch assignments first
+    |--------------------------------------------------------------------------
+    */
 
-            a.subject_id,
+    $stmt =
+        $conn->query("
+            SELECT
+                id,
+                teacher_id,
+                class_id,
+                subject_id
 
-            CONCAT_WS(
-                ' ',
-                u.first_name,
-                u.last_name
-            ) AS teacher_name,
+            FROM teacher_class_subjects
 
-            t.employee_id,
+            ORDER BY id DESC
+        ");
 
-            c.class_name,
+    $assignmentRows =
+        $stmt->fetchAll(
+            PDO::FETCH_ASSOC
+        );
 
-            s.subject_name,
 
-            a.created_at
+    /*
+    |--------------------------------------------------------------------------
+    | Build lookup arrays
+    |--------------------------------------------------------------------------
+    */
 
-        FROM teacher_class_subjects a
+    $teacherLookup = [];
 
-        INNER JOIN teachers t
-            ON t.id = a.teacher_id
+    foreach (
+        $teachers as $teacher
+    ) {
 
-        INNER JOIN users u
-            ON u.id = t.user_id
+        $teacherLookup[
+            (int)$teacher["id"]
+        ] =
+            $teacher;
+    }
 
-        INNER JOIN classes c
-            ON c.id = a.class_id
 
-        INNER JOIN subjects s
-            ON s.id = a.subject_id
+    $classLookup = [];
 
-        ORDER BY
+    foreach (
+        $classes as $class
+    ) {
 
-            teacher_name ASC,
+        $classLookup[
+            (int)$class["id"]
+        ] =
+            $class;
+    }
 
-            c.class_name ASC,
 
-            s.subject_name ASC
-    ");
+    $subjectLookup = [];
 
-$assignments =
-    $stmt->fetchAll(
-        PDO::FETCH_ASSOC
+    foreach (
+        $subjects as $subject
+    ) {
+
+        $subjectLookup[
+            (int)$subject["id"]
+        ] =
+            $subject;
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Combine
+    |--------------------------------------------------------------------------
+    */
+
+    foreach (
+        $assignmentRows
+        as $assignment
+    ) {
+
+        $teacherId =
+            (int)
+            $assignment[
+                "teacher_id"
+            ];
+
+        $classId =
+            (int)
+            $assignment[
+                "class_id"
+            ];
+
+        $subjectId =
+            (int)
+            $assignment[
+                "subject_id"
+            ];
+
+
+        $assignments[] = [
+
+            "id" =>
+                (int)
+                $assignment["id"],
+
+            "teacher_name" =>
+                $teacherLookup[
+                    $teacherId
+                ]["teacher_name"]
+                ??
+                "Teacher #"
+                . $teacherId,
+
+            "employee_id" =>
+                $teacherLookup[
+                    $teacherId
+                ]["employee_id"]
+                ??
+                "",
+
+            "class_name" =>
+                $classLookup[
+                    $classId
+                ]["class_name"]
+                ??
+                "Class #"
+                . $classId,
+
+            "subject_name" =>
+                $subjectLookup[
+                    $subjectId
+                ]["subject_name"]
+                ??
+                "Subject #"
+                . $subjectId
+
+        ];
+    }
+
+
+    usort(
+        $assignments,
+        function (
+            $a,
+            $b
+        ) {
+
+            $teacherCompare =
+                strcasecmp(
+                    $a["teacher_name"],
+                    $b["teacher_name"]
+                );
+
+            if (
+                $teacherCompare !== 0
+            ) {
+
+                return $teacherCompare;
+            }
+
+
+            $classCompare =
+                strcasecmp(
+                    $a["class_name"],
+                    $b["class_name"]
+                );
+
+            if (
+                $classCompare !== 0
+            ) {
+
+                return $classCompare;
+            }
+
+
+            return strcasecmp(
+                $a["subject_name"],
+                $b["subject_name"]
+            );
+        }
     );
+
+
+} catch (
+    Throwable $e
+) {
+
+    $error =
+        "Unable to load assignments: "
+        .
+        $e->getMessage();
+}
 
 ?>
 
@@ -545,8 +1217,9 @@ $assignments =
 >
 
 <title>
-    HIBS | Teacher Assignments
+    HIBS Reports | Teacher Assignments
 </title>
+
 
 <style>
 
@@ -555,39 +1228,75 @@ $assignments =
 }
 
 
+:root {
+
+    --navy: #263238;
+
+    --navy2: #37474f;
+
+    --slate: #607d8b;
+
+    --background: #f4f5f3;
+
+    --white: #ffffff;
+
+    --line: #dedfdd;
+
+    --text: #27353b;
+
+    --muted: #7c898e;
+
+    --success-bg: #edf5ef;
+
+    --success: #477052;
+
+    --error-bg: #fbefef;
+
+    --error: #914f4f;
+
+}
+
+
 body {
 
     margin: 0;
 
-    background: #f5f4f0;
+    background:
+        var(--background);
 
-    color: #263238;
+    color:
+        var(--text);
 
     font-family:
+        "Segoe UI",
         Arial,
-        Helvetica,
         sans-serif;
 
 }
 
 
+/* SIDEBAR */
+
 .sidebar {
 
     position: fixed;
 
-    left: 0;
     top: 0;
+    left: 0;
 
-    width: 235px;
+    width: 245px;
 
     height: 100vh;
 
-    padding:
-        27px 17px;
-
-    background: #263238;
+    background:
+        var(--navy);
 
     color: white;
+
+    padding:
+        25px 16px;
+
+    overflow-y: auto;
 
 }
 
@@ -595,20 +1304,20 @@ body {
 .brand {
 
     padding:
-        3px 10px 25px;
-
-    margin-bottom: 20px;
+        3px 11px 24px;
 
     border-bottom:
         1px solid
         rgba(255,255,255,.12);
+
+    margin-bottom: 22px;
 
 }
 
 
 .brand-title {
 
-    font-size: 17px;
+    font-size: 18px;
 
     font-weight: 700;
 
@@ -621,94 +1330,87 @@ body {
 
     margin-top: 6px;
 
-    color: #aeb8bc;
+    color: #b4bec2;
 
     font-size: 8px;
 
-    line-height: 1.6;
+    line-height: 1.7;
 
 }
 
 
-.nav-title {
+.nav-label {
 
-    padding:
+    margin:
         0 10px 7px;
 
-    color: #879399;
+    color: #879398;
 
     font-size: 7px;
 
-    font-weight: bold;
-
     text-transform: uppercase;
 
+    letter-spacing: 1px;
+
+    font-weight: 700;
+
 }
 
 
-.nav-link {
+.nav a {
 
-    display: block;
+    display: flex;
 
-    padding: 11px;
+    align-items: center;
 
-    margin-bottom: 4px;
+    min-height: 39px;
 
-    color: #dce2e5;
+    padding:
+        0 11px;
+
+    margin-bottom: 3px;
+
+    color: #dce2e4;
 
     text-decoration: none;
-
-    font-size: 10px;
-
-    border-radius: 4px;
-
-}
-
-
-.nav-link:hover {
-
-    background: #37474f;
-
-}
-
-
-.nav-link.active {
-
-    background: #546e7a;
-
-}
-
-
-.logout {
-
-    position: absolute;
-
-    left: 17px;
-    right: 17px;
-    bottom: 20px;
-
-    padding: 10px;
-
-    color: #dce2e5;
-
-    text-decoration: none;
-
-    border:
-        1px solid
-        rgba(255,255,255,.15);
-
-    text-align: center;
 
     font-size: 9px;
 
-    border-radius: 4px;
+    border-radius: 5px;
 
 }
 
 
+.nav a:hover {
+
+    background:
+        var(--navy2);
+
+}
+
+
+.nav a.active {
+
+    background:
+        #536a73;
+
+}
+
+
+.icon {
+
+    width: 23px;
+
+    font-size: 12px;
+
+}
+
+
+/* MAIN */
+
 .main {
 
-    margin-left: 235px;
+    margin-left: 245px;
 
     min-height: 100vh;
 
@@ -719,14 +1421,15 @@ body {
 
     height: 70px;
 
-    padding:
-        0 32px;
-
-    background: #ffffff;
+    background:
+        var(--white);
 
     border-bottom:
         1px solid
-        #deddd8;
+        var(--line);
+
+    padding:
+        0 32px;
 
     display: flex;
 
@@ -735,9 +1438,11 @@ body {
 }
 
 
-.topbar-title {
+.topbar h1 {
 
-    font-size: 16px;
+    margin: 0;
+
+    font-size: 17px;
 
     font-weight: 600;
 
@@ -749,85 +1454,100 @@ body {
     max-width: 1450px;
 
     padding:
-        28px 32px;
+        30px 32px;
 
 }
 
 
-.page-title {
+.page-heading {
 
-    margin-bottom: 20px;
+    margin-bottom: 22px;
 
 }
 
 
-.page-title h1 {
+.page-heading h2 {
 
     margin: 0;
 
-    font-size: 24px;
+    font-size: 23px;
 
     font-weight: 600;
 
 }
 
 
-.page-title p {
+.page-heading p {
 
     margin:
         7px 0 0;
 
-    color: #7d898d;
+    color:
+        var(--muted);
 
     font-size: 9px;
 
 }
 
 
+/* ALERTS */
+
 .alert {
 
-    margin-bottom: 18px;
+    padding:
+        13px 16px;
 
-    padding: 13px 15px;
+    margin-bottom: 18px;
 
     border: 1px solid;
 
     font-size: 8px;
 
-}
-
-
-.success {
-
-    background: #eaf3ed;
-
-    border-color: #cbdccd;
-
-    color: #426b50;
+    line-height: 1.6;
 
 }
 
 
-.error {
+.alert.success {
 
-    background: #fbefef;
+    background:
+        var(--success-bg);
 
-    border-color: #e0c8c8;
+    color:
+        var(--success);
 
-    color: #8b4b4b;
+    border-color:
+        #cadfce;
 
 }
 
+
+.alert.error {
+
+    background:
+        var(--error-bg);
+
+    color:
+        var(--error);
+
+    border-color:
+        #e4cccc;
+
+}
+
+
+/* FORM */
 
 .panel {
 
-    margin-bottom: 20px;
-
-    background: #ffffff;
+    background:
+        var(--white);
 
     border:
         1px solid
-        #deddd8;
+        var(--line);
+
+    margin-bottom: 20px;
 
 }
 
@@ -839,25 +1559,26 @@ body {
 
     border-bottom:
         1px solid
-        #e7e5e1;
+        #e8e9e7;
 
 }
 
 
 .panel-title {
 
-    font-size: 13px;
+    font-size: 12px;
 
     font-weight: 600;
 
 }
 
 
-.panel-subtitle {
+.panel-description {
 
     margin-top: 4px;
 
-    color: #899398;
+    color:
+        var(--muted);
 
     font-size: 7px;
 
@@ -881,7 +1602,7 @@ body {
         1fr
         auto;
 
-    gap: 10px;
+    gap: 12px;
 
     align-items: end;
 
@@ -894,11 +1615,12 @@ label {
 
     margin-bottom: 6px;
 
-    color: #68767b;
+    color:
+        #69777c;
 
     font-size: 7px;
 
-    font-weight: bold;
+    font-weight: 700;
 
     text-transform: uppercase;
 
@@ -909,52 +1631,62 @@ select {
 
     width: 100%;
 
-    height: 37px;
+    height: 39px;
 
-    padding: 0 9px;
+    padding:
+        0 10px;
 
     border:
         1px solid
-        #d2d1cc;
+        #cfd3d1;
 
-    background: white;
+    border-radius: 4px;
 
-    color: #455a64;
+    background:
+        white;
 
-    font-family: inherit;
+    color:
+        var(--text);
 
     font-size: 8px;
-
-    border-radius: 3px;
 
 }
 
 
 .button {
 
-    height: 37px;
+    height: 39px;
 
     padding:
-        0 16px;
+        0 18px;
 
     border: 0;
 
-    border-radius: 3px;
+    border-radius: 4px;
 
-    background: #455a64;
+    background:
+        var(--slate);
 
     color: white;
 
-    font-family: inherit;
-
     font-size: 8px;
 
-    font-weight: bold;
+    font-weight: 600;
 
     cursor: pointer;
 
 }
 
+
+.button:hover {
+
+    background:
+        var(--navy2);
+
+}
+
+
+/* TABLE */
 
 .table-wrap {
 
@@ -969,29 +1701,31 @@ table {
 
     border-collapse: collapse;
 
-    min-width: 800px;
-
 }
 
 
 th {
 
     padding:
-        11px 9px;
+        12px 14px;
 
-    background: #f1f2ef;
+    background:
+        #f1f2f0;
+
+    color:
+        #657277;
 
     border-bottom:
         1px solid
-        #d8d7d2;
-
-    color: #68767b;
-
-    font-size: 7px;
+        var(--line);
 
     text-align: left;
 
+    font-size: 7px;
+
     text-transform: uppercase;
+
+    letter-spacing: .4px;
 
 }
 
@@ -999,20 +1733,18 @@ th {
 td {
 
     padding:
-        11px 9px;
+        13px 14px;
 
     border-bottom:
         1px solid
-        #eceae6;
-
-    color: #455a64;
+        #eceeec;
 
     font-size: 8px;
 
 }
 
 
-.teacher {
+.teacher-name {
 
     font-weight: 600;
 
@@ -1023,14 +1755,15 @@ td {
 
     margin-top: 3px;
 
-    color: #909a9d;
+    color:
+        var(--muted);
 
     font-size: 6px;
 
 }
 
 
-.assignment {
+.assignment-value {
 
     font-weight: 600;
 
@@ -1040,19 +1773,19 @@ td {
 .remove {
 
     padding:
-        6px 9px;
+        6px 10px;
 
     border:
         1px solid
         #decaca;
 
-    background: white;
-
-    color: #8a5a5a;
-
     border-radius: 3px;
 
-    font-family: inherit;
+    background:
+        white;
+
+    color:
+        #8c5656;
 
     font-size: 6px;
 
@@ -1061,38 +1794,56 @@ td {
 }
 
 
-.empty {
+.remove:hover {
 
-    padding: 55px 20px;
-
-    text-align: center;
-
-    color: #899398;
-
-    font-size: 9px;
+    background:
+        #fbf1f1;
 
 }
 
+
+/* EMPTY */
+
+.empty {
+
+    padding:
+        50px 20px;
+
+    text-align: center;
+
+    color:
+        var(--muted);
+
+    font-size: 8px;
+
+}
+
+
+/* INFORMATION */
 
 .info {
 
     padding:
-        16px 18px;
+        17px 19px;
 
-    background: #f0f2f0;
+    background:
+        #eef1ef;
 
     border:
         1px solid
-        #d9ddd9;
+        #d8ddda;
 
-    color: #637176;
+    color:
+        #617076;
 
     font-size: 8px;
 
-    line-height: 1.7;
+    line-height: 1.8;
 
 }
 
+
+/* MOBILE */
 
 @media(max-width:900px) {
 
@@ -1117,39 +1868,22 @@ td {
 
         height: auto;
 
-        padding: 15px;
-
-    }
-
-
-    .nav-title {
-
-        display: none;
-
-    }
-
-
-    .nav-link {
-
-        display: inline-block;
-
-        padding: 8px;
-
-    }
-
-
-    .logout {
-
-        position: static;
-
-        margin-top: 12px;
-
     }
 
 
     .main {
 
         margin-left: 0;
+
+    }
+
+
+    .nav {
+
+        display: grid;
+
+        grid-template-columns:
+            1fr 1fr;
 
     }
 
@@ -1162,9 +1896,18 @@ td {
     }
 
 
+    .topbar {
+
+        padding:
+            0 15px;
+
+    }
+
+
     .form-grid {
 
-        grid-template-columns: 1fr;
+        grid-template-columns:
+            1fr;
 
     }
 
@@ -1204,118 +1947,179 @@ td {
 </div>
 
 
-<div class="nav-title">
+<div class="nav-label">
     Administration
 </div>
 
 
-<a
-    href="dashboard.php"
-    class="nav-link"
->
+<nav class="nav">
+
+
+<a href="dashboard.php">
+
+    <span class="icon">▦</span>
+
     Dashboard
+
 </a>
 
 
-<a
-    href="academic_setup.php"
-    class="nav-link"
->
+<a href="academic_setup.php">
+
+    <span class="icon">◫</span>
+
     Academic Setup
+
 </a>
 
 
 <a
     href="teacher_assignments.php"
-    class="nav-link active"
+    class="active"
 >
+
+    <span class="icon">⟷</span>
+
     Teacher Assignments
+
 </a>
 
 
-<a
-    href="students.php"
-    class="nav-link"
->
+<a href="students.php">
+
+    <span class="icon">♙</span>
+
     Students
+
 </a>
 
 
-<a
-    href="teachers.php"
-    class="nav-link"
->
+<a href="teachers.php">
+
+    <span class="icon">♙</span>
+
     Teachers
+
 </a>
 
 
-<a
-    href="mark_submissions.php"
-    class="nav-link"
->
+<a href="classes.php">
+
+    <span class="icon">□</span>
+
+    Classes
+
+</a>
+
+
+<a href="subjects.php">
+
+    <span class="icon">◇</span>
+
+    Subjects
+
+</a>
+
+
+<a href="mark_submissions.php">
+
+    <span class="icon">✓</span>
+
     Mark Submissions
+
 </a>
 
 
-<a
-    href="reports.php"
-    class="nav-link"
->
+<a href="reports.php">
+
+    <span class="icon">▤</span>
+
+    Reports
+
+</a>
+
+
+<a href="report_approval.php">
+
+    <span class="icon">✓</span>
+
     Report Approval
+
 </a>
 
 
-<a
-    href="analytics.php"
-    class="nav-link"
->
-    Academic Analytics
+<a href="publish_report.php">
+
+    <span class="icon">↑</span>
+
+    Publish Reports
+
 </a>
 
 
-<a
-    href="../logout.php"
-    class="logout"
->
-    Sign Out
+<a href="analytics.php">
+
+    <span class="icon">◒</span>
+
+    Analytics
+
 </a>
+
+
+<a href="database_check.php">
+
+    <span class="icon">◉</span>
+
+    Database Check
+
+</a>
+
+
+<a href="settings.php">
+
+    <span class="icon">⚙</span>
+
+    Settings
+
+</a>
+
+
+</nav>
 
 
 </aside>
 
 
-<div class="main">
+<main class="main">
 
 
 <header class="topbar">
 
-    <div class="topbar-title">
-
+    <h1>
         Teacher Assignments
-
-    </div>
+    </h1>
 
 </header>
 
 
-<main class="content">
+<div class="content">
 
 
-<div class="page-title">
+<div class="page-heading">
 
-    <h1>
+    <h2>
         Teacher Class & Subject Assignments
-    </h1>
+    </h2>
 
     <p>
-        Give each teacher access only to the classes and subjects they are responsible for.
+        Assign each teacher to the exact classes and subjects they are responsible for.
     </p>
 
 </div>
 
 
 <?php if (
-    $success
+    $success !== ""
 ): ?>
 
 <div class="alert success">
@@ -1330,10 +2134,14 @@ td {
 
 
 <?php if (
-    $error
+    $error !== ""
 ): ?>
 
 <div class="alert error">
+
+    <strong>
+        System message:
+    </strong>
 
     <?= h(
         $error
@@ -1344,6 +2152,8 @@ td {
 <?php endif; ?>
 
 
+<!-- CREATE ASSIGNMENT -->
+
 <section class="panel">
 
 
@@ -1351,13 +2161,13 @@ td {
 
     <div class="panel-title">
 
-        Create Assignment
+        Create Teacher Assignment
 
     </div>
 
-    <div class="panel-subtitle">
+    <div class="panel-description">
 
-        Select the exact teacher, class and subject.
+        Select the teacher, class and subject.
 
     </div>
 
@@ -1407,22 +2217,16 @@ td {
 >
 
     <?= h(
-        $teacher[
-            "teacher_name"
-        ]
+        $teacher["teacher_name"]
     ) ?>
 
     <?php if (
-        $teacher[
-            "employee_id"
-        ]
+        $teacher["employee_id"] !== ""
     ): ?>
 
         —
         <?= h(
-            $teacher[
-                "employee_id"
-            ]
+            $teacher["employee_id"]
         ) ?>
 
     <?php endif; ?>
@@ -1464,9 +2268,7 @@ td {
 >
 
     <?= h(
-        $class[
-            "class_name"
-        ]
+        $class["class_name"]
     ) ?>
 
 </option>
@@ -1506,9 +2308,7 @@ td {
 >
 
     <?= h(
-        $subject[
-            "subject_name"
-        ]
+        $subject["subject_name"]
     ) ?>
 
 </option>
@@ -1542,6 +2342,8 @@ td {
 </section>
 
 
+<!-- CURRENT ASSIGNMENTS -->
+
 <section class="panel">
 
 
@@ -1549,13 +2351,13 @@ td {
 
     <div class="panel-title">
 
-        Current Teacher Assignments
+        Current Assignments
 
     </div>
 
-    <div class="panel-subtitle">
+    <div class="panel-description">
 
-        Every row represents one exact teaching responsibility.
+        Each row represents one exact teaching responsibility.
 
     </div>
 
@@ -1563,7 +2365,7 @@ td {
 
 
 <?php if (
-    count($assignments)
+    count($assignments) > 0
 ): ?>
 
 
@@ -1577,25 +2379,21 @@ td {
 
 <tr>
 
-    <th>
-        Teacher
-    </th>
+<th>
+    Teacher
+</th>
 
-    <th>
-        Class
-    </th>
+<th>
+    Class
+</th>
 
-    <th>
-        Subject
-    </th>
+<th>
+    Subject
+</th>
 
-    <th>
-        Assigned
-    </th>
-
-    <th>
-        Action
-    </th>
+<th>
+    Action
+</th>
 
 </tr>
 
@@ -1617,7 +2415,7 @@ td {
 <td>
 
 
-<div class="teacher">
+<div class="teacher-name">
 
     <?= h(
         $assignment[
@@ -1628,23 +2426,31 @@ td {
 </div>
 
 
+<?php if (
+    $assignment[
+        "employee_id"
+    ] !== ""
+): ?>
+
 <div class="employee">
 
     <?= h(
         $assignment[
             "employee_id"
         ]
-        ??
-        "No Employee ID"
     ) ?>
 
 </div>
+
+<?php endif; ?>
 
 
 </td>
 
 
-<td class="assignment">
+<td>
+
+<div class="assignment-value">
 
     <?= h(
         $assignment[
@@ -1652,10 +2458,14 @@ td {
         ]
     ) ?>
 
+</div>
+
 </td>
 
 
-<td class="assignment">
+<td>
+
+<div class="assignment-value">
 
     <?= h(
         $assignment[
@@ -1663,21 +2473,7 @@ td {
         ]
     ) ?>
 
-</td>
-
-
-<td>
-
-    <?= h(
-        date(
-            "d M Y",
-            strtotime(
-                $assignment[
-                    "created_at"
-                ]
-            )
-        )
-    ) ?>
+</div>
 
 </td>
 
@@ -1689,7 +2485,7 @@ td {
     method="POST"
     onsubmit="
         return confirm(
-            'Remove this teacher assignment?'
+            'Are you sure you want to remove this teacher assignment?'
         );
     "
 >
@@ -1756,23 +2552,22 @@ td {
 
 <div class="info">
 
-<strong>How this works:</strong>
+<strong>
+    Assignment control:
+</strong>
 
-If a teacher is assigned to
-<strong>Year 10 → Physics</strong>,
-that teacher will be authorised to enter Physics marks
-for Year 10.
+A teacher assigned to
+<strong>Year 10 → Physics</strong>
+will be authorised to work with that exact class and subject.
+Assignment to another class or subject must be created separately.
 
-Being assigned to another class or another subject
-does not automatically grant access to this combination.
+</div>
+
 
 </div>
 
 
 </main>
-
-
-</div>
 
 
 </body>
