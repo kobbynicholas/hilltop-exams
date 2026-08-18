@@ -2094,6 +2094,215 @@ body {
 
     }
 
+
+
+/* =========================================================
+   HIBS DASHBOARD - READABILITY IMPROVEMENT
+========================================================= */
+
+body {
+    font-size: 14px;
+}
+
+.brand-name {
+    font-size: 21px;
+}
+
+.brand-school {
+    font-size: 10px;
+}
+
+.section-label {
+    font-size: 10px;
+}
+
+.nav a {
+    min-height: 45px;
+    font-size: 13px;
+}
+
+.nav-icon {
+    width: 24px;
+    font-size: 15px;
+}
+
+.user-name {
+    font-size: 11px;
+}
+
+.user-role {
+    font-size: 9px;
+}
+
+.topbar {
+    height: 78px;
+}
+
+.topbar-left h1 {
+    font-size: 22px;
+}
+
+.topbar-left p {
+    font-size: 11px;
+}
+
+.date {
+    font-size: 11px;
+}
+
+.welcome h2 {
+    font-size: 28px;
+}
+
+.welcome p {
+    font-size: 13px;
+}
+
+.stat {
+    min-height: 145px;
+    padding: 22px;
+}
+
+.stat-label {
+    font-size: 11px;
+}
+
+.stat-number {
+    margin-top: 13px;
+    font-size: 32px;
+}
+
+.stat-description {
+    margin-top: 8px;
+    font-size: 11px;
+}
+
+.status {
+    padding: 19px 20px;
+}
+
+.status-label {
+    font-size: 10px;
+}
+
+.status-number {
+    font-size: 23px;
+}
+
+.panel-header {
+    min-height: 70px;
+    padding: 0 22px;
+}
+
+.panel-title {
+    font-size: 15px;
+}
+
+.panel-subtitle {
+    margin-top: 5px;
+    font-size: 10px;
+}
+
+.panel-link {
+    font-size: 10px;
+}
+
+.activity-row {
+    padding: 16px 22px;
+}
+
+.student-name {
+    font-size: 12px;
+}
+
+.student-meta {
+    margin-top: 4px;
+    font-size: 9px;
+}
+
+.cell {
+    font-size: 10px;
+}
+
+.badge {
+    padding: 6px 9px;
+    font-size: 9px;
+}
+
+.quick-grid {
+    padding: 20px;
+    gap: 11px;
+}
+
+.quick {
+    min-height: 95px;
+    padding: 15px;
+}
+
+.quick-icon {
+    font-size: 20px;
+}
+
+.quick-title {
+    margin-top: 9px;
+    font-size: 12px;
+}
+
+.quick-text {
+    margin-top: 5px;
+    font-size: 9px;
+}
+
+.snapshot {
+    padding: 20px;
+}
+
+.snapshot-item {
+    padding: 14px 0;
+}
+
+.snapshot-label {
+    font-size: 10px;
+}
+
+.snapshot-value {
+    font-size: 12px;
+}
+
+.health {
+    padding: 21px;
+}
+
+.health-title {
+    font-size: 12px;
+}
+
+.health-status {
+    font-size: 10px;
+}
+
+.health-text {
+    margin-top: 9px;
+    font-size: 10px;
+}
+
+.footer {
+    font-size: 10px;
+}
+
+.empty {
+    padding: 45px 20px;
+    font-size: 11px;
+}
+
+
+
+
+
+
+
+
+    
 }
 
 </style>
