@@ -3,298 +3,137 @@
 session_start();
 
 require_once "../config/db.php";
+require_once "../config/grading.php";
 
-if (
-    !isset($_SESSION["user_id"]) ||
-    $_SESSION["role"] !== "teacher"
-) {
-    header("Location: ../login.php");
-    exit;
-}
-
-$user_id = (int)$_SESSION["user_id"];
+ini_set("display_errors", "0");
+error_reporting(E_ALL);
 
 
 /*
 |--------------------------------------------------------------------------
-| GET TEACHER
+| HIBS REPORTS
+| TEACHER MARKS ENTRY
+|--------------------------------------------------------------------------
+*/
+
+
+function h($value): string
+{
+    return htmlspecialchars(
+        (string)$value,
+        ENT_QUOTES,
+        "UTF-8"
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| TEACHER SECURITY
+|--------------------------------------------------------------------------
+*/
+
+if (
+    !isset($_SESSION["user_id"]) ||
+    ($_SESSION["role"] ?? "") !== "teacher"
+) {
+
+    header(
+        "Location: ../login.php"
+    );
+
+    exit;
+}
+
+
+$userId =
+    (int)$_SESSION["user_id"];
+
+
+/*
+|--------------------------------------------------------------------------
+| FIND TEACHER
 |--------------------------------------------------------------------------
 */
 
 $stmt = $conn->prepare("
-    SELECT id
+    SELECT
+        id,
+        employee_id,
+        phone,
+        qualification,
+        specialization
     FROM teachers
     WHERE user_id = ?
     LIMIT 1
 ");
 
-$stmt->execute([$user_id]);
+$stmt->execute([
+    $userId
+]);
 
-$teacher = $stmt->fetch();
+$teacher =
+    $stmt->fetch(
+        PDO::FETCH_ASSOC
+    );
+
 
 if (!$teacher) {
-    die("Teacher profile not found.");
-}
-
-$teacher_id = (int)$teacher["id"];
-
-
-/*
-|--------------------------------------------------------------------------
-| GET ACTIVE TERM
-|--------------------------------------------------------------------------
-*/
-
-$stmt = $conn->query("
-    SELECT
-        t.id,
-        t.term_name,
-        ay.academic_year
-    FROM terms t
-
-    INNER JOIN academic_years ay
-        ON ay.id = t.academic_year_id
-
-    WHERE
-        t.status = 'Active'
-        AND ay.status = 'Active'
-
-    ORDER BY t.id DESC
-
-    LIMIT 1
-");
-
-$activeTerm = $stmt->fetch();
-
-if (!$activeTerm) {
 
     die(
-        "There is no active academic year and term. "
-        . "Please contact the administrator."
+        "Teacher profile could not be found."
     );
 }
 
-$term_id = (int)$activeTerm["id"];
+
+$teacherId =
+    (int)$teacher["id"];
 
 
 /*
 |--------------------------------------------------------------------------
-| SELECT CLASS / SUBJECT
+| SELECTED VALUES
 |--------------------------------------------------------------------------
 */
 
-$class_id = (int)($_GET["class_id"] ?? 0);
-$subject_id = (int)($_GET["subject_id"] ?? 0);
+$academicYearId =
+    filter_input(
+        INPUT_GET,
+        "academic_year_id",
+        FILTER_VALIDATE_INT
+    );
+
+$termId =
+    filter_input(
+        INPUT_GET,
+        "term_id",
+        FILTER_VALIDATE_INT
+    );
+
+$classId =
+    filter_input(
+        INPUT_GET,
+        "class_id",
+        FILTER_VALIDATE_INT
+    );
+
+$subjectId =
+    filter_input(
+        INPUT_GET,
+        "subject_id",
+        FILTER_VALIDATE_INT
+    );
 
 
 /*
 |--------------------------------------------------------------------------
-| VERIFY CLASS
+| MESSAGES
 |--------------------------------------------------------------------------
 */
 
-$allowedClass = false;
+$error = "";
 
-if ($class_id > 0) {
-
-    $stmt = $conn->prepare("
-        SELECT id
-        FROM teacher_classes
-        WHERE
-            teacher_id = ?
-            AND class_id = ?
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $teacher_id,
-        $class_id
-    ]);
-
-    $allowedClass = (bool)$stmt->fetch();
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| VERIFY SUBJECT
-|--------------------------------------------------------------------------
-*/
-
-$allowedSubject = false;
-
-if ($subject_id > 0) {
-
-    $stmt = $conn->prepare("
-        SELECT id
-        FROM teacher_subjects
-        WHERE
-            teacher_id = ?
-            AND subject_id = ?
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $teacher_id,
-        $subject_id
-    ]);
-
-    $allowedSubject = (bool)$stmt->fetch();
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| VERIFY CLASS-SUBJECT COMBINATION
-|--------------------------------------------------------------------------
-*/
-
-$validCombination = false;
-
-if (
-    $class_id > 0 &&
-    $subject_id > 0 &&
-    $allowedClass &&
-    $allowedSubject
-) {
-
-    $stmt = $conn->prepare("
-        SELECT id
-        FROM class_subjects
-        WHERE
-            class_id = ?
-            AND subject_id = ?
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $class_id,
-        $subject_id
-    ]);
-
-    $validCombination = (bool)$stmt->fetch();
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| GET TEACHER CLASSES
-|--------------------------------------------------------------------------
-*/
-
-$stmt = $conn->prepare("
-    SELECT
-        c.id,
-        c.class_name
-    FROM teacher_classes tc
-
-    INNER JOIN classes c
-        ON c.id = tc.class_id
-
-    WHERE tc.teacher_id = ?
-
-    ORDER BY c.class_name
-");
-
-$stmt->execute([$teacher_id]);
-
-$classes = $stmt->fetchAll();
-
-
-/*
-|--------------------------------------------------------------------------
-| GET TEACHER SUBJECTS
-|--------------------------------------------------------------------------
-*/
-
-$stmt = $conn->prepare("
-    SELECT
-        s.id,
-        s.subject_code,
-        s.subject_name
-    FROM teacher_subjects ts
-
-    INNER JOIN subjects s
-        ON s.id = ts.subject_id
-
-    WHERE ts.teacher_id = ?
-
-    ORDER BY s.subject_name
-");
-
-$stmt->execute([$teacher_id]);
-
-$subjects = $stmt->fetchAll();
-
-
-/*
-|--------------------------------------------------------------------------
-| GET STUDENTS
-|--------------------------------------------------------------------------
-*/
-
-$students = [];
-
-if ($validCombination) {
-
-    $stmt = $conn->prepare("
-        SELECT
-            id,
-            student_id,
-            first_name,
-            middle_name,
-            last_name
-        FROM students
-        WHERE
-            class_id = ?
-            AND status = 'Active'
-        ORDER BY
-            last_name,
-            first_name
-    ");
-
-    $stmt->execute([$class_id]);
-
-    $students = $stmt->fetchAll();
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| GET ASSESSMENT COMPONENTS
-|--------------------------------------------------------------------------
-*/
-
-$components = [];
-
-if ($validCombination) {
-
-    $stmt = $conn->prepare("
-        SELECT
-            ac.id,
-            ac.component_name,
-            ac.max_score,
-            ac.weight
-        FROM subject_assessments sa
-
-        INNER JOIN assessment_components ac
-            ON ac.id = sa.component_id
-
-        WHERE
-            sa.class_id = ?
-            AND sa.subject_id = ?
-            AND ac.status = 'Active'
-
-        ORDER BY sa.id
-    ");
-
-    $stmt->execute([
-        $class_id,
-        $subject_id
-    ]);
-
-    $components = $stmt->fetchAll();
-}
+$success = "";
 
 
 /*
@@ -304,213 +143,1719 @@ if ($validCombination) {
 */
 
 if (
-    $_SERVER["REQUEST_METHOD"] === "POST" &&
-    $validCombination
+    $_SERVER["REQUEST_METHOD"] === "POST"
 ) {
 
-    $scores = $_POST["score"] ?? [];
+    $postAcademicYear =
+        filter_input(
+            INPUT_POST,
+            "academic_year_id",
+            FILTER_VALIDATE_INT
+        );
 
-    try {
+    $postTerm =
+        filter_input(
+            INPUT_POST,
+            "term_id",
+            FILTER_VALIDATE_INT
+        );
 
-        $conn->beginTransaction();
+    $postClass =
+        filter_input(
+            INPUT_POST,
+            "class_id",
+            FILTER_VALIDATE_INT
+        );
 
-        foreach ($students as $student) {
+    $postSubject =
+        filter_input(
+            INPUT_POST,
+            "subject_id",
+            FILTER_VALIDATE_INT
+        );
 
-            $student_id = (int)$student["id"];
 
-            foreach ($components as $component) {
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFY TEACHER CLASS ASSIGNMENT
+    |--------------------------------------------------------------------------
+    */
 
-                $component_id = (int)$component["id"];
+    $checkClass =
+        $conn->prepare("
+            SELECT COUNT(*)
 
-                $value = null;
+            FROM teacher_classes
+
+            WHERE
+                teacher_id = ?
+                AND class_id = ?
+        ");
+
+    $checkClass->execute([
+
+        $teacherId,
+
+        $postClass
+
+    ]);
+
+
+    $classAssigned =
+        (int)$checkClass->fetchColumn();
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFY TEACHER SUBJECT ASSIGNMENT
+    |--------------------------------------------------------------------------
+    */
+
+    $checkSubject =
+        $conn->prepare("
+            SELECT COUNT(*)
+
+            FROM teacher_subjects
+
+            WHERE
+                teacher_id = ?
+                AND subject_id = ?
+        ");
+
+    $checkSubject->execute([
+
+        $teacherId,
+
+        $postSubject
+
+    ]);
+
+
+    $subjectAssigned =
+        (int)$checkSubject->fetchColumn();
+
+
+    if (
+        !$classAssigned ||
+        !$subjectAssigned
+    ) {
+
+        $error =
+            "You are not assigned to this class and subject.";
+
+    } else {
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATE TERM
+        |--------------------------------------------------------------------------
+        */
+
+        $checkTerm =
+            $conn->prepare("
+                SELECT COUNT(*)
+
+                FROM terms
+
+                WHERE
+                    id = ?
+                    AND academic_year_id = ?
+            ");
+
+        $checkTerm->execute([
+
+            $postTerm,
+
+            $postAcademicYear
+
+        ]);
+
+
+        if (
+            !(int)$checkTerm->fetchColumn()
+        ) {
+
+            $error =
+                "The selected term does not belong to the selected academic year.";
+
+        } else {
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | PROCESS MARKS
+            |--------------------------------------------------------------------------
+            */
+
+            $marks =
+                $_POST["marks"]
+                ?? [];
+
+
+            try {
+
+                $conn->beginTransaction();
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | CHECK WHETHER REPORT IS PUBLISHED
+                |--------------------------------------------------------------------------
+                */
+
+                $reportCheck =
+                    $conn->prepare("
+                        SELECT
+                            id,
+                            report_status
+
+                        FROM report_card_records
+
+                        WHERE
+
+                            class_id = ?
+
+                            AND term_id = ?
+
+                            AND report_status = 'Published'
+
+                        LIMIT 1
+                    ");
+
+                $reportCheck->execute([
+
+                    $postClass,
+
+                    $postTerm
+
+                ]);
+
+
+                $publishedReport =
+                    $reportCheck->fetch(
+                        PDO::FETCH_ASSOC
+                    );
+
 
                 if (
-                    isset(
-                        $scores[$student_id][$component_id]
-                    ) &&
-                    $scores[$student_id][$component_id] !== ""
+                    $publishedReport
                 ) {
 
-                    $value = (float)
-                        $scores[$student_id][$component_id];
+                    throw new Exception(
+                        "This term has already been published. Marks are locked."
+                    );
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | SAVE EACH STUDENT
+                |--------------------------------------------------------------------------
+                */
+
+                $save =
+                    $conn->prepare("
+                        INSERT INTO marks (
+
+                            student_id,
+                            subject_id,
+                            term_id,
+                            classwork,
+                            test,
+                            examination,
+                            total,
+                            grade,
+                            grade_description
+
+                        )
+
+                        VALUES (
+
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?
+
+                        )
+
+                        ON DUPLICATE KEY UPDATE
+
+                            classwork =
+                                VALUES(classwork),
+
+                            test =
+                                VALUES(test),
+
+                            examination =
+                                VALUES(examination),
+
+                            total =
+                                VALUES(total),
+
+                            grade =
+                                VALUES(grade),
+
+                            grade_description =
+                                VALUES(grade_description)
+                    ");
+
+
+                foreach (
+                    $marks
+                    as $studentId =>
+                    $values
+                ) {
+
+
+                    $studentId =
+                        (int)$studentId;
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | GET VALUES
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $classwork =
+                        isset(
+                            $values["classwork"]
+                        )
+                        &&
+                        $values["classwork"] !== ""
+                            ? (float)$values["classwork"]
+                            : 0;
+
+
+                    $test =
+                        isset(
+                            $values["test"]
+                        )
+                        &&
+                        $values["test"] !== ""
+                            ? (float)$values["test"]
+                            : 0;
+
+
+                    $examination =
+                        isset(
+                            $values["examination"]
+                        )
+                        &&
+                        $values["examination"] !== ""
+                            ? (float)$values["examination"]
+                            : 0;
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | VALIDATE
+                    |--------------------------------------------------------------------------
+                    */
 
                     if (
-                        $value < 0 ||
-                        $value > (float)$component["max_score"]
+                        $classwork < 0 ||
+                        $test < 0 ||
+                        $examination < 0
                     ) {
 
                         throw new Exception(
-                            "A score is outside the allowed range."
+                            "Marks cannot be negative."
                         );
                     }
+
+
+                    $total =
+                        $classwork +
+                        $test +
+                        $examination;
+
+
+                    if (
+                        $total > 100
+                    ) {
+
+                        throw new Exception(
+                            "The total mark for a student cannot exceed 100."
+                        );
+                    }
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | GRADE
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $grade =
+                        hibs_get_grade(
+                            $total
+                        );
+
+
+                    $description =
+                        hibs_grade_description(
+                            $grade
+                        );
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | VERIFY STUDENT BELONGS TO CLASS
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $studentCheck =
+                        $conn->prepare("
+                            SELECT COUNT(*)
+
+                            FROM students
+
+                            WHERE
+                                id = ?
+                                AND class_id = ?
+                        ");
+
+                    $studentCheck->execute([
+
+                        $studentId,
+
+                        $postClass
+
+                    ]);
+
+
+                    if (
+                        !(int)$studentCheck->fetchColumn()
+                    ) {
+
+                        throw new Exception(
+                            "A selected student does not belong to this class."
+                        );
+                    }
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | SAVE
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $save->execute([
+
+                        $studentId,
+
+                        $postSubject,
+
+                        $postTerm,
+
+                        $classwork,
+
+                        $test,
+
+                        $examination,
+
+                        $total,
+
+                        $grade,
+
+                        $description
+
+                    ]);
                 }
 
-                $stmt = $conn->prepare("
-                    INSERT INTO mark_entries
-                    (
-                        student_id,
-                        class_id,
-                        subject_id,
-                        term_id,
-                        component_id,
-                        score
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
 
-                    ON DUPLICATE KEY UPDATE
-                        score = VALUES(score)
-                ");
+                $conn->commit();
 
-                $stmt->execute([
-                    $student_id,
-                    $class_id,
-                    $subject_id,
-                    $term_id,
-                    $component_id,
-                    $value
-                ]);
+
+                $success =
+                    "Marks saved successfully.";
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | PRESERVE FILTERS
+                |--------------------------------------------------------------------------
+                */
+
+                $academicYearId =
+                    $postAcademicYear;
+
+                $termId =
+                    $postTerm;
+
+                $classId =
+                    $postClass;
+
+                $subjectId =
+                    $postSubject;
+
+
+            } catch (
+                Throwable $e
+            ) {
+
+
+                if (
+                    $conn->inTransaction()
+                ) {
+
+                    $conn->rollBack();
+                }
+
+
+                $error =
+                    $e->getMessage();
             }
         }
-
-        $conn->commit();
-
-        header(
-            "Location: marks.php?class_id="
-            . $class_id
-            . "&subject_id="
-            . $subject_id
-            . "&saved=1"
-        );
-
-        exit;
-
-    } catch (Exception $e) {
-
-        if ($conn->inTransaction()) {
-            $conn->rollBack();
-        }
-
-        $error = $e->getMessage();
     }
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| GET EXISTING MARKS
+| ACADEMIC YEARS
 |--------------------------------------------------------------------------
 */
 
-$existingMarks = [];
-
-if ($validCombination) {
-
-    $stmt = $conn->prepare("
+$academicYears =
+    $conn->query("
         SELECT
-            student_id,
-            component_id,
-            score
-        FROM mark_entries
-        WHERE
-            class_id = ?
-            AND subject_id = ?
-            AND term_id = ?
-    ");
+            id,
+            academic_year
+
+        FROM academic_years
+
+        ORDER BY id DESC
+    ")->fetchAll(
+        PDO::FETCH_ASSOC
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| TERMS
+|--------------------------------------------------------------------------
+*/
+
+$terms = [];
+
+
+if (
+    $academicYearId
+) {
+
+    $stmt =
+        $conn->prepare("
+            SELECT
+                id,
+                term_name
+
+            FROM terms
+
+            WHERE academic_year_id = ?
+
+            ORDER BY id ASC
+        ");
 
     $stmt->execute([
-        $class_id,
-        $subject_id,
-        $term_id
+        $academicYearId
     ]);
 
-    foreach ($stmt->fetchAll() as $mark) {
+    $terms =
+        $stmt->fetchAll(
+            PDO::FETCH_ASSOC
+        );
+}
 
-        $existingMarks[
-            $mark["student_id"]
-        ][
-            $mark["component_id"]
-        ] = $mark["score"];
+
+/*
+|--------------------------------------------------------------------------
+| ASSIGNED CLASSES
+|--------------------------------------------------------------------------
+*/
+
+$stmt =
+    $conn->prepare("
+        SELECT
+
+            c.id,
+            c.class_name
+
+        FROM teacher_classes tc
+
+        INNER JOIN classes c
+            ON c.id = tc.class_id
+
+        WHERE tc.teacher_id = ?
+
+        ORDER BY c.class_name ASC
+    ");
+
+$stmt->execute([
+    $teacherId
+]);
+
+$classes =
+    $stmt->fetchAll(
+        PDO::FETCH_ASSOC
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| ASSIGNED SUBJECTS
+|--------------------------------------------------------------------------
+*/
+
+$stmt =
+    $conn->prepare("
+        SELECT
+
+            s.id,
+            s.subject_name
+
+        FROM teacher_subjects ts
+
+        INNER JOIN subjects s
+            ON s.id = ts.subject_id
+
+        WHERE ts.teacher_id = ?
+
+        ORDER BY s.subject_name ASC
+    ");
+
+$stmt->execute([
+    $teacherId
+]);
+
+$subjects =
+    $stmt->fetchAll(
+        PDO::FETCH_ASSOC
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| STUDENTS
+|--------------------------------------------------------------------------
+*/
+
+$students = [];
+
+$currentMarks = [];
+
+
+if (
+    $classId &&
+    $subjectId &&
+    $termId
+) {
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | CHECK ASSIGNMENTS AGAIN
+    |--------------------------------------------------------------------------
+    */
+
+    $validClass = false;
+
+    $validSubject = false;
+
+
+    foreach (
+        $classes
+        as $class
+    ) {
+
+        if (
+            (int)$class["id"]
+            ===
+            (int)$classId
+        ) {
+
+            $validClass = true;
+
+            break;
+        }
+    }
+
+
+    foreach (
+        $subjects
+        as $subject
+    ) {
+
+        if (
+            (int)$subject["id"]
+            ===
+            (int)$subjectId
+        ) {
+
+            $validSubject = true;
+
+            break;
+        }
+    }
+
+
+    if (
+        $validClass &&
+        $validSubject
+    ) {
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | STUDENTS
+        |--------------------------------------------------------------------------
+        */
+
+        $stmt =
+            $conn->prepare("
+                SELECT
+
+                    id,
+                    student_id,
+                    first_name,
+                    middle_name,
+                    last_name
+
+                FROM students
+
+                WHERE class_id = ?
+
+                ORDER BY
+                    first_name ASC,
+                    last_name ASC
+            ");
+
+        $stmt->execute([
+            $classId
+        ]);
+
+        $students =
+            $stmt->fetchAll(
+                PDO::FETCH_ASSOC
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | EXISTING MARKS
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            count($students)
+        ) {
+
+            $studentIds =
+                array_column(
+                    $students,
+                    "id"
+                );
+
+
+            $placeholders =
+                implode(
+                    ",",
+                    array_fill(
+                        0,
+                        count($studentIds),
+                        "?"
+                    )
+                );
+
+
+            $params =
+                array_merge(
+
+                    $studentIds,
+
+                    [
+                        $subjectId,
+                        $termId
+                    ]
+
+                );
+
+
+            $stmt =
+                $conn->prepare("
+                    SELECT
+
+                        student_id,
+                        classwork,
+                        test,
+                        examination,
+                        total,
+                        grade,
+                        grade_description
+
+                    FROM marks
+
+                    WHERE
+
+                        student_id IN (
+                            $placeholders
+                        )
+
+                        AND subject_id = ?
+
+                        AND term_id = ?
+                ");
+
+
+            $stmt->execute(
+                $params
+            );
+
+
+            while (
+                $row =
+                $stmt->fetch(
+                    PDO::FETCH_ASSOC
+                )
+            ) {
+
+                $currentMarks[
+                    $row["student_id"]
+                ] =
+                    $row;
+            }
+        }
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| SELECTED NAMES
+|--------------------------------------------------------------------------
+*/
+
+$selectedClassName = "";
+
+foreach (
+    $classes
+    as $class
+) {
+
+    if (
+        (int)$class["id"]
+        ===
+        (int)$classId
+    ) {
+
+        $selectedClassName =
+            $class["class_name"];
+
+        break;
+    }
+}
+
+
+$selectedSubjectName = "";
+
+foreach (
+    $subjects
+    as $subject
+) {
+
+    if (
+        (int)$subject["id"]
+        ===
+        (int)$subjectId
+    ) {
+
+        $selectedSubjectName =
+            $subject["subject_name"];
+
+        break;
     }
 }
 
 ?>
 
 <!DOCTYPE html>
+
 <html lang="en">
 
 <head>
 
 <meta charset="UTF-8">
 
-<meta name="viewport"
-      content="width=device-width, initial-scale=1.0">
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
 
-<title>HIBS Reports | Marks Entry</title>
+<title>
+    HIBS Reports | Marks Entry
+</title>
 
-<link rel="stylesheet"
-      href="../assets/css/style.css">
 
 <style>
 
-.marks-header {
-    background: #641c2b;
-    color: white;
-    padding: 24px;
-    margin-bottom: 25px;
+* {
+    box-sizing: border-box;
 }
+
+
+body {
+
+    margin: 0;
+
+    background: #f5f4f0;
+
+    color: #263238;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+}
+
+
+/* =========================================================
+   SIDEBAR
+========================================================= */
+
+.sidebar {
+
+    position: fixed;
+
+    left: 0;
+    top: 0;
+
+    width: 235px;
+
+    height: 100vh;
+
+    background: #263238;
+
+    padding: 27px 17px;
+
+    color: #ffffff;
+
+}
+
+
+.brand {
+
+    padding:
+        3px 10px 25px;
+
+    border-bottom:
+        1px solid
+        rgba(255,255,255,.12);
+
+    margin-bottom: 20px;
+
+}
+
+
+.brand-title {
+
+    font-size: 17px;
+
+    font-weight: 700;
+
+    letter-spacing: 1px;
+
+}
+
+
+.brand-subtitle {
+
+    margin-top: 6px;
+
+    color: #aeb8bc;
+
+    font-size: 8px;
+
+    line-height: 1.6;
+
+    letter-spacing: .8px;
+
+}
+
+
+.nav-title {
+
+    padding:
+        0 10px 7px;
+
+    color: #879399;
+
+    font-size: 7px;
+
+    font-weight: bold;
+
+    text-transform: uppercase;
+
+    letter-spacing: 1px;
+
+}
+
+
+.nav-link {
+
+    display: block;
+
+    padding: 11px;
+
+    margin-bottom: 4px;
+
+    color: #dce2e5;
+
+    text-decoration: none;
+
+    font-size: 10px;
+
+    border-radius: 4px;
+
+}
+
+
+.nav-link:hover {
+
+    background: #37474f;
+
+}
+
+
+.nav-link.active {
+
+    background: #546e7a;
+
+}
+
+
+.logout {
+
+    position: absolute;
+
+    left: 17px;
+    right: 17px;
+
+    bottom: 20px;
+
+    display: block;
+
+    padding: 10px;
+
+    border:
+        1px solid
+        rgba(255,255,255,.15);
+
+    color: #dce2e5;
+
+    text-decoration: none;
+
+    text-align: center;
+
+    font-size: 9px;
+
+    border-radius: 4px;
+
+}
+
+
+/* =========================================================
+   MAIN
+========================================================= */
+
+.main {
+
+    margin-left: 235px;
+
+    min-height: 100vh;
+
+}
+
+
+.topbar {
+
+    height: 70px;
+
+    padding:
+        0 32px;
+
+    background: #ffffff;
+
+    border-bottom:
+        1px solid
+        #deddd8;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+}
+
+
+.topbar-title {
+
+    font-size: 16px;
+
+    font-weight: 600;
+
+}
+
+
+.teacher-name {
+
+    color: #7b878b;
+
+    font-size: 9px;
+
+}
+
+
+/* =========================================================
+   CONTENT
+========================================================= */
+
+.content {
+
+    padding:
+        28px 32px;
+
+    max-width: 1450px;
+
+}
+
+
+.page-title {
+
+    margin-bottom: 22px;
+
+}
+
+
+.page-title h1 {
+
+    margin: 0;
+
+    font-size: 24px;
+
+    font-weight: 600;
+
+}
+
+
+.page-title p {
+
+    margin:
+        7px 0 0;
+
+    color: #7d898d;
+
+    font-size: 9px;
+
+}
+
+
+/* =========================================================
+   ALERTS
+========================================================= */
+
+.alert {
+
+    margin-bottom: 18px;
+
+    padding: 13px 15px;
+
+    font-size: 9px;
+
+    border: 1px solid;
+
+}
+
+
+.alert-success {
+
+    background: #ebf3ed;
+
+    color: #426b50;
+
+    border-color: #cadccd;
+
+}
+
+
+.alert-error {
+
+    background: #fbefef;
+
+    color: #8b4b4b;
+
+    border-color: #e1c9c9;
+
+}
+
+
+/* =========================================================
+   FILTER PANEL
+========================================================= */
+
+.panel {
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #deddd8;
+
+    margin-bottom: 20px;
+
+}
+
+
+.panel-header {
+
+    padding:
+        18px 20px;
+
+    border-bottom:
+        1px solid
+        #e7e5e1;
+
+}
+
+
+.panel-header h2 {
+
+    margin: 0;
+
+    font-size: 14px;
+
+    font-weight: 600;
+
+}
+
+
+.panel-header p {
+
+    margin:
+        5px 0 0;
+
+    color: #8a9498;
+
+    font-size: 8px;
+
+}
+
+
+.filters {
+
+    padding: 20px;
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(4, 1fr);
+
+    gap: 12px;
+
+}
+
+
+.field label {
+
+    display: block;
+
+    margin-bottom: 6px;
+
+    color: #69767b;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    text-transform: uppercase;
+
+}
+
+
+.field select {
+
+    width: 100%;
+
+    height: 38px;
+
+    padding:
+        0 10px;
+
+    border:
+        1px solid
+        #d2d1cc;
+
+    background: #ffffff;
+
+    color: #455a64;
+
+    font-family: inherit;
+
+    font-size: 9px;
+
+    border-radius: 3px;
+
+}
+
+
+.filter-action {
+
+    padding:
+        0 20px 20px;
+
+}
+
+
+.btn {
+
+    display: inline-block;
+
+    padding:
+        10px 15px;
+
+    border: 0;
+
+    border-radius: 3px;
+
+    font-family: inherit;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    text-decoration: none;
+
+    cursor: pointer;
+
+}
+
+
+.btn-primary {
+
+    background: #455a64;
+
+    color: #ffffff;
+
+}
+
+
+.btn-primary:hover {
+
+    background: #263238;
+
+}
+
+
+/* =========================================================
+   MARKS TABLE
+========================================================= */
+
+.marks-panel {
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #deddd8;
+
+}
+
+
+.marks-header {
+
+    padding:
+        18px 20px;
+
+    border-bottom:
+        1px solid
+        #e7e5e1;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+}
+
 
 .marks-header h2 {
-    font-weight: normal;
-    font-size: 25px;
+
+    margin: 0;
+
+    font-size: 14px;
+
+    font-weight: 600;
+
 }
+
 
 .marks-header p {
-    font-family: Arial, sans-serif;
-    font-size: 12px;
-    margin-top: 6px;
-    opacity: .85;
+
+    margin:
+        5px 0 0;
+
+    color: #8a9498;
+
+    font-size: 8px;
+
 }
 
-.selection-panel {
-    background: white;
-    border: 1px solid #e5dfd7;
-    padding: 25px;
-    margin-bottom: 25px;
+
+.save-button {
+
+    padding:
+        10px 15px;
+
+    border: 0;
+
+    border-radius: 3px;
+
+    background: #455a64;
+
+    color: #ffffff;
+
+    font-family: inherit;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    cursor: pointer;
+
 }
 
-.marks-table input {
-    width: 85px;
-    padding: 9px;
-    border: 1px solid #dcd5cb;
-    text-align: center;
+
+.table-wrap {
+
+    overflow-x: auto;
+
 }
 
-.marks-table input:focus {
-    border-color: #b58a3a;
-    outline: none;
+
+table {
+
+    width: 100%;
+
+    min-width: 900px;
+
+    border-collapse: collapse;
+
 }
 
-.component-heading {
-    text-align: center !important;
+
+thead th {
+
+    padding:
+        11px 8px;
+
+    background: #f1f2ef;
+
+    border-bottom:
+        1px solid
+        #d8d7d2;
+
+    color: #68767b;
+
+    font-size: 7px;
+
+    text-align: left;
+
+    text-transform: uppercase;
+
 }
+
+
+tbody td {
+
+    padding:
+        8px;
+
+    border-bottom:
+        1px solid
+        #eceae6;
+
+    color: #455a64;
+
+    font-size: 9px;
+
+}
+
+
+.student-number {
+
+    width: 7%;
+
+    color: #899398;
+
+}
+
 
 .student-name {
-    min-width: 220px;
+
+    min-width: 230px;
+
+    font-weight: 600;
+
 }
 
-.save-bar {
-    background: white;
-    border: 1px solid #e5dfd7;
-    padding: 20px;
-    text-align: right;
-    position: sticky;
-    bottom: 0;
+
+.mark-input {
+
+    width: 85px;
+
+    height: 34px;
+
+    padding:
+        0 8px;
+
+    border:
+        1px solid
+        #d1d0cb;
+
+    border-radius: 3px;
+
+    background: #ffffff;
+
+    color: #37474f;
+
+    font-family: inherit;
+
+    font-size: 9px;
+
+    text-align: center;
+
 }
 
-@media(max-width:900px) {
 
-    .marks-table {
-        min-width: 900px;
+.mark-input:focus {
+
+    outline: none;
+
+    border-color: #607d8b;
+
+}
+
+
+.total {
+
+    font-weight: 700;
+
+    text-align: center;
+
+}
+
+
+.grade {
+
+    text-align: center;
+
+    font-weight: 700;
+
+}
+
+
+.grade-a {
+
+    color: #3f6d50;
+
+}
+
+
+.grade-b {
+
+    color: #4e7259;
+
+}
+
+
+.grade-c {
+
+    color: #66785b;
+
+}
+
+
+.grade-d {
+
+    color: #88744d;
+
+}
+
+
+.grade-e {
+
+    color: #8a704e;
+
+}
+
+
+.grade-f,
+.grade-u {
+
+    color: #985858;
+
+}
+
+
+.empty {
+
+    padding:
+        60px 20px;
+
+    text-align: center;
+
+    color: #899398;
+
+    font-size: 9px;
+
+}
+
+
+.summary {
+
+    padding:
+        15px 20px;
+
+    background: #fafaf8;
+
+    border-top:
+        1px solid
+        #e4e3de;
+
+    color: #7b878b;
+
+    font-size: 8px;
+
+}
+
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media(max-width:950px) {
+
+    .filters {
+
+        grid-template-columns:
+            repeat(2, 1fr);
+
+    }
+
+}
+
+
+@media(max-width:700px) {
+
+    .sidebar {
+
+        position: static;
+
+        width: 100%;
+
+        height: auto;
+
+        padding: 15px;
+
+    }
+
+
+    .brand {
+
+        padding-bottom: 15px;
+
+    }
+
+
+    .nav-title {
+
+        display: none;
+
+    }
+
+
+    .nav-link {
+
+        display: inline-block;
+
+        padding: 8px;
+
+    }
+
+
+    .logout {
+
+        position: static;
+
+        margin-top: 12px;
+
+    }
+
+
+    .main {
+
+        margin-left: 0;
+
+    }
+
+
+    .topbar {
+
+        padding:
+            0 18px;
+
+    }
+
+
+    .content {
+
+        padding:
+            20px 15px;
+
+    }
+
+
+    .filters {
+
+        grid-template-columns: 1fr;
+
+    }
+
+
+    .marks-header {
+
+        align-items: flex-start;
+
+        flex-direction: column;
+
+        gap: 12px;
+
+    }
+
+
+    .save-button {
+
+        width: 100%;
+
     }
 
 }
@@ -519,130 +1864,302 @@ if ($validCombination) {
 
 </head>
 
+
 <body>
 
-<header class="hibs-header">
+
+<!-- =====================================================
+     SIDEBAR
+====================================================== -->
+
+<aside class="sidebar">
+
 
     <div class="brand">
 
-        <div class="brand-mark">H</div>
+        <div class="brand-title">
+            HIBS REPORTS
+        </div>
 
-        <div class="brand-text">
+        <div class="brand-subtitle">
 
-            <h1>HIBS REPORTS</h1>
-
-            <span>
-                HILLTOP INTERNATIONAL BRITISH SCHOOL
-            </span>
+            HILLTOP INTERNATIONAL<br>
+            BRITISH SCHOOL
 
         </div>
 
     </div>
 
-    <div class="top-user">
 
-        <div class="user-name">
+    <div class="nav-title">
+        Teacher Portal
+    </div>
 
-            <strong>
-                <?= htmlspecialchars($_SESSION["full_name"]) ?>
-            </strong>
 
-            <small>Teacher</small>
+    <a
+        href="dashboard.php"
+        class="nav-link"
+    >
+        Dashboard
+    </a>
 
-        </div>
 
-        <a href="../logout.php"
-           class="logout-link">
-            Sign out
-        </a>
+    <a
+        href="marks.php"
+        class="nav-link active"
+    >
+        Marks Entry
+    </a>
+
+
+    <a
+        href="students.php"
+        class="nav-link"
+    >
+        My Students
+    </a>
+
+
+    <a
+        href="reports.php"
+        class="nav-link"
+    >
+        My Reports
+    </a>
+
+
+    <a
+        href="profile.php"
+        class="nav-link"
+    >
+        My Profile
+    </a>
+
+
+    <a
+        href="../logout.php"
+        class="logout"
+    >
+        Sign Out
+    </a>
+
+
+</aside>
+
+
+<!-- =====================================================
+     MAIN
+====================================================== -->
+
+<div class="main">
+
+
+<header class="topbar">
+
+
+    <div class="topbar-title">
+
+        Marks Entry
 
     </div>
+
+
+    <div class="teacher-name">
+
+        Teacher Portal
+
+    </div>
+
 
 </header>
 
 
-<nav class="hibs-nav">
-
-    <a href="dashboard.php">
-        Dashboard
-    </a>
-
-    <a href="classes.php">
-        My Classes
-    </a>
-
-    <a href="subjects.php">
-        My Subjects
-    </a>
-
-    <a href="marks.php"
-       class="active">
-        Marks
-    </a>
-
-    <a href="profile.php">
-        My Profile
-    </a>
-
-</nav>
+<main class="content">
 
 
-<main class="page">
+    <div class="page-title">
 
-    <div class="marks-header">
-
-        <h2>
-            Marks Entry
-        </h2>
+        <h1>
+            Student Marks Entry
+        </h1>
 
         <p>
-
-            <?= htmlspecialchars(
-                $activeTerm["academic_year"]
-            ) ?>
-
-            ·
-
-            <?= htmlspecialchars(
-                $activeTerm["term_name"]
-            ) ?>
-
+            Enter continuous assessment and examination
+            marks for students assigned to you.
         </p>
 
     </div>
 
 
-    <?php if (isset($_GET["saved"])): ?>
+    <?php if (
+        $success !== ""
+    ): ?>
 
         <div class="alert alert-success">
 
-            Marks saved successfully.
+            <?= h(
+                $success
+            ) ?>
 
         </div>
 
     <?php endif; ?>
 
 
-    <?php if (isset($error)): ?>
+    <?php if (
+        $error !== ""
+    ): ?>
 
-        <div class="alert alert-danger">
+        <div class="alert alert-error">
 
-            <?= htmlspecialchars($error) ?>
+            <?= h(
+                $error
+            ) ?>
 
         </div>
 
     <?php endif; ?>
 
 
-    <div class="selection-panel">
+    <!-- =================================================
+         SELECTION
+    ================================================== -->
 
-        <form method="GET">
+    <section class="panel">
 
-            <div class="form-grid">
 
-                <div class="form-group">
+        <div class="panel-header">
 
-                    <label>Class</label>
+            <h2>
+                Select Teaching Context
+            </h2>
+
+            <p>
+                Select the academic year, term, class and
+                subject before entering marks.
+            </p>
+
+        </div>
+
+
+        <form
+            method="GET"
+        >
+
+
+            <div class="filters">
+
+
+                <!-- YEAR -->
+
+                <div class="field">
+
+                    <label>
+                        Academic Year
+                    </label>
+
+                    <select
+                        name="academic_year_id"
+                        onchange="this.form.submit()"
+                        required
+                    >
+
+                        <option value="">
+                            Select Academic Year
+                        </option>
+
+
+                        <?php foreach (
+                            $academicYears
+                            as $year
+                        ): ?>
+
+                            <option
+                                value="<?= (int)$year["id"] ?>"
+                                <?= (
+                                    (int)$academicYearId
+                                    ===
+                                    (int)$year["id"]
+                                )
+                                    ? "selected"
+                                    : ""
+                                ?>
+                            >
+
+                                <?= h(
+                                    $year[
+                                        "academic_year"
+                                    ]
+                                ) ?>
+
+                            </option>
+
+                        <?php endforeach; ?>
+
+
+                    </select>
+
+                </div>
+
+
+                <!-- TERM -->
+
+                <div class="field">
+
+                    <label>
+                        Term
+                    </label>
+
+                    <select
+                        name="term_id"
+                        required
+                    >
+
+                        <option value="">
+                            Select Term
+                        </option>
+
+
+                        <?php foreach (
+                            $terms
+                            as $term
+                        ): ?>
+
+                            <option
+                                value="<?= (int)$term["id"] ?>"
+                                <?= (
+                                    (int)$termId
+                                    ===
+                                    (int)$term["id"]
+                                )
+                                    ? "selected"
+                                    : ""
+                                ?>
+                            >
+
+                                <?= h(
+                                    $term[
+                                        "term_name"
+                                    ]
+                                ) ?>
+
+                            </option>
+
+                        <?php endforeach; ?>
+
+
+                    </select>
+
+                </div>
+
+
+                <!-- CLASS -->
+
+                <div class="field">
+
+                    <label>
+                        Class
+                    </label>
 
                     <select
                         name="class_id"
@@ -653,31 +2170,47 @@ if ($validCombination) {
                             Select Class
                         </option>
 
-                        <?php foreach ($classes as $class): ?>
+
+                        <?php foreach (
+                            $classes
+                            as $class
+                        ): ?>
 
                             <option
-                                value="<?= $class["id"] ?>"
-                                <?= $class_id === (int)$class["id"]
+                                value="<?= (int)$class["id"] ?>"
+                                <?= (
+                                    (int)$classId
+                                    ===
+                                    (int)$class["id"]
+                                )
                                     ? "selected"
-                                    : "" ?>
+                                    : ""
+                                ?>
                             >
 
-                                <?= htmlspecialchars(
-                                    $class["class_name"]
+                                <?= h(
+                                    $class[
+                                        "class_name"
+                                    ]
                                 ) ?>
 
                             </option>
 
                         <?php endforeach; ?>
 
+
                     </select>
 
                 </div>
 
 
-                <div class="form-group">
+                <!-- SUBJECT -->
 
-                    <label>Subject</label>
+                <div class="field">
+
+                    <label>
+                        Subject
+                    </label>
 
                     <select
                         name="subject_id"
@@ -688,257 +2221,705 @@ if ($validCombination) {
                             Select Subject
                         </option>
 
-                        <?php foreach ($subjects as $subject): ?>
+
+                        <?php foreach (
+                            $subjects
+                            as $subject
+                        ): ?>
 
                             <option
-                                value="<?= $subject["id"] ?>"
-                                <?= $subject_id === (int)$subject["id"]
+                                value="<?= (int)$subject["id"] ?>"
+                                <?= (
+                                    (int)$subjectId
+                                    ===
+                                    (int)$subject["id"]
+                                )
                                     ? "selected"
-                                    : "" ?>
+                                    : ""
+                                ?>
                             >
 
-                                <?= htmlspecialchars(
-                                    $subject["subject_name"]
+                                <?= h(
+                                    $subject[
+                                        "subject_name"
+                                    ]
                                 ) ?>
 
                             </option>
 
                         <?php endforeach; ?>
 
+
                     </select>
 
                 </div>
 
+
             </div>
 
 
-            <button
-                type="submit"
-                class="btn btn-primary"
-            >
-                Load Mark Sheet
-            </button>
+            <div class="filter-action">
+
+                <button
+                    type="submit"
+                    class="btn btn-primary"
+                >
+                    Load Students
+                </button>
+
+            </div>
+
 
         </form>
 
-    </div>
+
+    </section>
 
 
-    <?php if ($class_id && $subject_id && !$validCombination): ?>
+    <!-- =================================================
+         MARKS
+    ================================================== -->
 
-        <div class="alert alert-danger">
-
-            You are not authorised to enter marks for this
-            class and subject combination.
-
-        </div>
-
-    <?php endif; ?>
+    <?php if (
+        count($students) > 0
+    ): ?>
 
 
-    <?php if ($validCombination): ?>
+        <form
+            method="POST"
+            class="marks-panel"
+        >
 
 
-        <div class="content-panel">
-
-            <h3>
-                Student Mark Sheet
-            </h3>
-
-            <p style="
-                font-family:Arial;
-                color:#777;
-                font-size:13px;
-                margin-bottom:20px;
-            ">
-
-                Enter scores according to the maximum scores
-                shown in the column headings.
-
-            </p>
+            <input
+                type="hidden"
+                name="academic_year_id"
+                value="<?= (int)$academicYearId ?>"
+            >
 
 
-            <?php if (!$components): ?>
+            <input
+                type="hidden"
+                name="term_id"
+                value="<?= (int)$termId ?>"
+            >
 
-                <div class="alert alert-danger">
 
-                    No assessment components have been configured
-                    for this class and subject.
+            <input
+                type="hidden"
+                name="class_id"
+                value="<?= (int)$classId ?>"
+            >
 
-                    Please contact the administrator.
+
+            <input
+                type="hidden"
+                name="subject_id"
+                value="<?= (int)$subjectId ?>"
+            >
+
+
+            <div class="marks-header">
+
+
+                <div>
+
+                    <h2>
+
+                        <?= h(
+                            $selectedClassName
+                        ) ?>
+
+                        —
+                        <?= h(
+                            $selectedSubjectName
+                        ) ?>
+
+                    </h2>
+
+
+                    <p>
+
+                        <?= count(
+                            $students
+                        ) ?>
+
+                        student(s)
+
+                    </p>
 
                 </div>
 
-            <?php elseif (!$students): ?>
 
-                <div class="alert alert-danger">
+                <button
+                    type="submit"
+                    class="save-button"
+                >
 
-                    There are no active students in this class.
+                    Save All Marks
 
-                </div>
-
-            <?php else: ?>
-
-
-                <form method="POST">
+                </button>
 
 
-                    <div class="table-wrapper">
-
-                        <table
-                            class="hibs-table marks-table"
-                        >
-
-                            <thead>
-
-                            <tr>
-
-                                <th>#</th>
-
-                                <th class="student-name">
-                                    Student
-                                </th>
-
-                                <?php foreach ($components as $component): ?>
-
-                                    <th class="component-heading">
-
-                                        <?= htmlspecialchars(
-                                            $component["component_name"]
-                                        ) ?>
-
-                                        <br>
-
-                                        <small>
-                                            / <?= $component["max_score"] ?>
-                                            · <?= $component["weight"] ?>%
-                                        </small>
-
-                                    </th>
-
-                                <?php endforeach; ?>
-
-                            </tr>
-
-                            </thead>
+            </div>
 
 
-                            <tbody>
-
-                            <?php $number = 1; ?>
-
-                            <?php foreach ($students as $student): ?>
-
-                                <tr>
-
-                                    <td>
-                                        <?= $number++ ?>
-                                    </td>
+            <div class="table-wrap">
 
 
-                                    <td>
-
-                                        <strong>
-
-                                            <?= htmlspecialchars(
-                                                $student["last_name"]
-                                            ) ?>,
-
-                                            <?= htmlspecialchars(
-                                                $student["first_name"]
-                                            ) ?>
-
-                                            <?php if (
-                                                $student["middle_name"]
-                                            ): ?>
-
-                                                <?= htmlspecialchars(
-                                                    $student["middle_name"]
-                                                ) ?>
-
-                                            <?php endif; ?>
-
-                                        </strong>
-
-                                        <br>
-
-                                        <small>
-
-                                            <?= htmlspecialchars(
-                                                $student["student_id"]
-                                            ) ?>
-
-                                        </small>
-
-                                    </td>
+                <table>
 
 
-                                    <?php foreach (
-                                        $components
-                                        as $component
-                                    ): ?>
+                    <thead>
 
-                                        <td>
+                    <tr>
 
-                                            <input
-                                                type="number"
-                                                name="score[<?= $student["id"] ?>][<?= $component["id"] ?>]"
-                                                min="0"
-                                                max="<?= $component["max_score"] ?>"
-                                                step="0.01"
-                                                value="<?= isset(
-                                                    $existingMarks[
-                                                        $student["id"]
-                                                    ][
-                                                        $component["id"]
-                                                    ]
-                                                )
-                                                    ? htmlspecialchars(
-                                                        $existingMarks[
-                                                            $student["id"]
-                                                        ][
-                                                            $component["id"]
-                                                        ]
-                                                    )
-                                                    : "" ?>"
-                                            >
+                        <th>
+                            #
+                        </th>
 
-                                        </td>
+                        <th>
+                            Student
+                        </th>
 
-                                    <?php endforeach; ?>
+                        <th>
+                            Classwork
+                        </th>
 
-                                </tr>
+                        <th>
+                            Test
+                        </th>
 
-                            <?php endforeach; ?>
+                        <th>
+                            Examination
+                        </th>
 
-                            </tbody>
+                        <th>
+                            Total
+                        </th>
 
-                        </table>
+                        <th>
+                            Grade
+                        </th>
 
-                    </div>
+                    </tr>
+
+                    </thead>
 
 
-                    <div class="save-bar">
-
-                        <button
-                            type="submit"
-                            class="btn btn-primary"
-                        >
-                            Save Marks
-                        </button>
-
-                    </div>
+                    <tbody>
 
 
-                </form>
+                    <?php
+                    $counter = 1;
+                    ?>
 
-            <?php endif; ?>
 
-        </div>
+                    <?php foreach (
+                        $students
+                        as $student
+                    ): ?>
+
+
+                        <?php
+
+                        $sid =
+                            (int)$student["id"];
+
+
+                        $existing =
+                            $currentMarks[
+                                $sid
+                            ]
+                            ?? [];
+
+
+                        $classwork =
+                            $existing[
+                                "classwork"
+                            ]
+                            ?? "";
+
+
+                        $test =
+                            $existing[
+                                "test"
+                            ]
+                            ?? "";
+
+
+                        $examination =
+                            $existing[
+                                "examination"
+                            ]
+                            ?? "";
+
+
+                        $total =
+                            $existing[
+                                "total"
+                            ]
+                            ?? "";
+
+
+                        $grade =
+                            $existing[
+                                "grade"
+                            ]
+                            ?? "";
+
+                        ?>
+
+
+                        <tr>
+
+
+                            <td class="student-number">
+
+                                <?= $counter++ ?>
+
+                            </td>
+
+
+                            <td class="student-name">
+
+                                <?= h(
+                                    trim(
+                                        implode(
+                                            " ",
+                                            array_filter([
+                                                $student[
+                                                    "first_name"
+                                                ] ?? "",
+
+                                                $student[
+                                                    "middle_name"
+                                                ] ?? "",
+
+                                                $student[
+                                                    "last_name"
+                                                ] ?? ""
+                                            ])
+                                        )
+                                    )
+                                ) ?>
+
+
+                                <br>
+
+
+                                <span
+                                    style="
+                                        color:#98a1a4;
+                                        font-size:7px;
+                                        font-weight:normal;
+                                    "
+                                >
+
+                                    <?= h(
+                                        $student[
+                                            "student_id"
+                                        ]
+                                    ) ?>
+
+                                </span>
+
+
+                            </td>
+
+
+                            <td>
+
+                                <input
+                                    type="number"
+                                    class="mark-input mark-field"
+                                    name="marks[<?= $sid ?>][classwork]"
+                                    value="<?= h($classwork) ?>"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    data-student="<?= $sid ?>"
+                                >
+
+                            </td>
+
+
+                            <td>
+
+                                <input
+                                    type="number"
+                                    class="mark-input mark-field"
+                                    name="marks[<?= $sid ?>][test]"
+                                    value="<?= h($test) ?>"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    data-student="<?= $sid ?>"
+                                >
+
+                            </td>
+
+
+                            <td>
+
+                                <input
+                                    type="number"
+                                    class="mark-input mark-field"
+                                    name="marks[<?= $sid ?>][examination]"
+                                    value="<?= h($examination) ?>"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    data-student="<?= $sid ?>"
+                                >
+
+                            </td>
+
+
+                            <td
+                                class="total"
+                                id="total-<?= $sid ?>"
+                            >
+
+                                <?= h(
+                                    $total
+                                ) ?>
+
+                            </td>
+
+
+                            <td
+                                class="grade"
+                                id="grade-<?= $sid ?>"
+                            >
+
+                                <?= h(
+                                    $grade
+                                ) ?>
+
+                            </td>
+
+
+                        </tr>
+
+
+                    <?php endforeach; ?>
+
+
+                    </tbody>
+
+
+                </table>
+
+
+            </div>
+
+
+            <div class="summary">
+
+                Classwork + Test + Examination =
+                Total Score out of 100.
+
+                Grades are calculated automatically.
+
+            </div>
+
+
+        </form>
+
+
+    <?php elseif (
+        $classId &&
+        $subjectId &&
+        $termId
+    ): ?>
+
+
+        <section class="marks-panel">
+
+            <div class="empty">
+
+                No students were found in this class.
+
+            </div>
+
+        </section>
+
 
     <?php endif; ?>
+
 
 </main>
+
+
+</div>
+
+
+<script>
+
+/*
+|--------------------------------------------------------------------------
+| LIVE TOTAL + GRADE
+|--------------------------------------------------------------------------
+*/
+
+function calculateRow(
+    studentId
+) {
+
+
+    const classwork =
+        parseFloat(
+            document.querySelector(
+                '[name="marks[' +
+                studentId +
+                '][classwork]"]'
+            ).value
+        ) || 0;
+
+
+    const test =
+        parseFloat(
+            document.querySelector(
+                '[name="marks[' +
+                studentId +
+                '][test]"]'
+            ).value
+        ) || 0;
+
+
+    const examination =
+        parseFloat(
+            document.querySelector(
+                '[name="marks[' +
+                studentId +
+                '][examination]"]'
+            ).value
+        ) || 0;
+
+
+    const total =
+        classwork +
+        test +
+        examination;
+
+
+    const totalElement =
+        document.getElementById(
+            "total-" +
+            studentId
+        );
+
+
+    const gradeElement =
+        document.getElementById(
+            "grade-" +
+            studentId
+        );
+
+
+    if (
+        totalElement
+    ) {
+
+        totalElement.textContent =
+            total.toFixed(2);
+
+    }
+
+
+    let grade = "";
+
+
+    if (
+        total >= 90
+    ) {
+
+        grade = "A*";
+
+    } else if (
+        total >= 80
+    ) {
+
+        grade = "A";
+
+    } else if (
+        total >= 70
+    ) {
+
+        grade = "B";
+
+    } else if (
+        total >= 60
+    ) {
+
+        grade = "C";
+
+    } else if (
+        total >= 50
+    ) {
+
+        grade = "D";
+
+    } else if (
+        total >= 40
+    ) {
+
+        grade = "E";
+
+    } else if (
+        total >= 30
+    ) {
+
+        grade = "F";
+
+    } else {
+
+        grade = "U";
+
+    }
+
+
+    if (
+        gradeElement
+    ) {
+
+        gradeElement.textContent =
+            grade;
+
+    }
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| LISTEN TO MARK INPUTS
+|--------------------------------------------------------------------------
+*/
+
+document
+    .querySelectorAll(
+        ".mark-field"
+    )
+    .forEach(
+        function(input) {
+
+            input.addEventListener(
+                "input",
+                function() {
+
+                    calculateRow(
+                        this.dataset.student
+                    );
+
+                }
+            );
+
+        }
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| INITIAL CALCULATION
+|--------------------------------------------------------------------------
+*/
+
+document
+    .querySelectorAll(
+        ".mark-field"
+    )
+    .forEach(
+        function(input) {
+
+            calculateRow(
+                input.dataset.student
+            );
+
+        }
+    );
+
+
+/*
+|--------------------------------------------------------------------------
+| PREVENT TOTAL ABOVE 100
+|--------------------------------------------------------------------------
+*/
+
+document
+    .querySelectorAll(
+        ".mark-field"
+    )
+    .forEach(
+        function(input) {
+
+            input.addEventListener(
+                "input",
+                function() {
+
+                    const studentId =
+                        this.dataset.student;
+
+
+                    const classwork =
+                        parseFloat(
+                            document.querySelector(
+                                '[name="marks[' +
+                                studentId +
+                                '][classwork]"]'
+                            ).value
+                        ) || 0;
+
+
+                    const test =
+                        parseFloat(
+                            document.querySelector(
+                                '[name="marks[' +
+                                studentId +
+                                '][test]"]'
+                            ).value
+                        ) || 0;
+
+
+                    const examination =
+                        parseFloat(
+                            document.querySelector(
+                                '[name="marks[' +
+                                studentId +
+                                '][examination]"]'
+                            ).value
+                        ) || 0;
+
+
+                    if (
+                        classwork +
+                        test +
+                        examination
+                        >
+                        100
+                    ) {
+
+                        this.setCustomValidity(
+                            "The three marks cannot total more than 100."
+                        );
+
+                    } else {
+
+                        this.setCustomValidity(
+                            ""
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+    );
+
+</script>
+
 
 </body>
 
