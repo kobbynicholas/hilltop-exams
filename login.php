@@ -9,65 +9,71 @@ require_once "config/db.php";
 ini_set("display_errors", "1");
 error_reporting(E_ALL);
 
+
+/*
+|--------------------------------------------------------------------------
+| HIBS REPORTS
+| MAIN LOGIN SYSTEM
+|--------------------------------------------------------------------------
+*/
+
+
 $error = "";
 
 
 /*
 |--------------------------------------------------------------------------
-| ALREADY LOGGED IN
+| HELPER
 |--------------------------------------------------------------------------
 */
 
-if (
-    !empty(
-        $_SESSION["user_id"]
-    )
+function h($value): string
+{
+    return htmlspecialchars(
+        (string)$value,
+        ENT_QUOTES,
+        "UTF-8"
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| CHECK TABLE
+|--------------------------------------------------------------------------
+*/
+
+try {
+
+    $tableCheck = $conn->query("
+        SELECT COUNT(*)
+
+        FROM information_schema.tables
+
+        WHERE table_schema = DATABASE()
+
+        AND table_name = 'users'
+    ");
+
+
+    if (
+        (int)$tableCheck->fetchColumn() === 0
+    ) {
+
+        throw new Exception(
+            "The users table does not exist."
+        );
+    }
+
+
+} catch (
+    Throwable $e
 ) {
 
-    $role =
-        strtolower(
-            (string)
-            (
-                $_SESSION["role"]
-                ?? ""
-            )
-        );
-
-
-    if (
-        $role === "admin"
-    ) {
-
-        header(
-            "Location: admin/dashboard.php"
-        );
-
-        exit;
-    }
-
-
-    if (
-        $role === "teacher"
-    ) {
-
-        header(
-            "Location: teacher/dashboard.php"
-        );
-
-        exit;
-    }
-
-
-    if (
-        $role === "student"
-    ) {
-
-        header(
-            "Location: student/dashboard.php"
-        );
-
-        exit;
-    }
+    $error =
+        "Login system error: "
+        .
+        $e->getMessage();
 }
 
 
@@ -79,6 +85,8 @@ if (
 
 if (
     $_SERVER["REQUEST_METHOD"] === "POST"
+    &&
+    $error === ""
 ) {
 
     $username =
@@ -112,17 +120,20 @@ if (
 
         try {
 
+            /*
+            |--------------------------------------------------------------------------
+            | GET ACTUAL USERS COLUMNS
+            |--------------------------------------------------------------------------
+            |
+            | We deliberately use SELECT *
+            | so this login system does not assume
+            | first_name, last_name, email, etc.
+            |
+            */
+
             $stmt =
                 $conn->prepare("
-                    SELECT
-
-                        id,
-                        username,
-                        password,
-                        role,
-                        status,
-                        first_name,
-                        last_name
+                    SELECT *
 
                     FROM users
 
@@ -143,123 +154,256 @@ if (
                 );
 
 
+            /*
+            |--------------------------------------------------------------------------
+            | USER NOT FOUND
+            |--------------------------------------------------------------------------
+            */
+
             if (
                 !$user
-                ||
-                !password_verify(
-                    $password,
-                    $user["password"]
-                )
             ) {
 
                 $error =
                     "Invalid username or password.";
 
-            } elseif (
-                strtolower(
-                    (string)
-                    $user["status"]
-                )
-                !== "active"
-            ) {
-
-                $error =
-                    "This account has been deactivated.";
-
             } else {
 
                 /*
                 |--------------------------------------------------------------------------
-                | SECURE SESSION
+                | PASSWORD COLUMN
                 |--------------------------------------------------------------------------
                 */
 
-                session_regenerate_id(
-                    true
-                );
+                $storedPassword =
+                    $user["password"]
+                    ??
+                    $user["password_hash"]
+                    ??
+                    null;
 
 
-                $_SESSION[
-                    "user_id"
-                ] =
-                    (int)
-                    $user["id"];
+                if (
+                    !$storedPassword
+                ) {
 
-
-                $_SESSION[
-                    "username"
-                ] =
-                    $user["username"];
-
-
-                $_SESSION[
-                    "role"
-                ] =
-                    strtolower(
-                        (string)
-                        $user["role"]
+                    throw new Exception(
+                        "The users table does not contain a valid password field."
                     );
-
-
-                $_SESSION[
-                    "first_name"
-                ] =
-                    $user["first_name"]
-                    ?? "";
-
-
-                $_SESSION[
-                    "last_name"
-                ] =
-                    $user["last_name"]
-                    ?? "";
+                }
 
 
                 /*
                 |--------------------------------------------------------------------------
-                | REDIRECT
+                | VERIFY PASSWORD
                 |--------------------------------------------------------------------------
                 */
 
-                switch (
-                    $_SESSION["role"]
+                if (
+                    !password_verify(
+                        $password,
+                        (string)
+                        $storedPassword
+                    )
                 ) {
 
-                    case "admin":
+                    $error =
+                        "Invalid username or password.";
 
-                        header(
-                            "Location: admin/dashboard.php"
+                } else {
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | CHECK ACCOUNT STATUS
+                    |--------------------------------------------------------------------------
+                    */
+
+                    if (
+                        array_key_exists(
+                            "status",
+                            $user
+                        )
+                    ) {
+
+                        $status =
+                            strtolower(
+                                trim(
+                                    (string)
+                                    $user["status"]
+                                )
+                            );
+
+
+                        if (
+                            in_array(
+                                $status,
+                                [
+                                    "inactive",
+                                    "disabled",
+                                    "blocked",
+                                    "suspended"
+                                ],
+                                true
+                            )
+                        ) {
+
+                            throw new Exception(
+                                "This account is currently inactive. Please contact the school administrator."
+                            );
+                        }
+                    }
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | ROLE
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $role =
+                        strtolower(
+                            trim(
+                                (string)
+                                (
+                                    $user["role"]
+                                    ??
+                                    ""
+                                )
+                            )
                         );
 
-                        exit;
+
+                    if (
+                        $role === ""
+                    ) {
+
+                        throw new Exception(
+                            "This account does not have a valid user role."
+                        );
+                    }
 
 
-                    case "teacher":
+                    /*
+                    |--------------------------------------------------------------------------
+                    | REGENERATE SESSION ID
+                    |--------------------------------------------------------------------------
+                    */
 
-                        header(
-                            "Location: teacher/dashboard.php"
+                    session_regenerate_id(
+                        true
+                    );
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | STORE SESSION
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $_SESSION[
+                        "user_id"
+                    ] =
+                        (int)
+                        $user["id"];
+
+
+                    $_SESSION[
+                        "username"
+                    ] =
+                        (string)
+                        $user["username"];
+
+
+                    $_SESSION[
+                        "role"
+                    ] =
+                        $role;
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | OPTIONAL USER INFORMATION
+                    |--------------------------------------------------------------------------
+                    |
+                    | We only store these if they actually exist.
+                    |
+                    */
+
+                    $_SESSION[
+                        "first_name"
+                    ] =
+                        (string)
+                        (
+                            $user["first_name"]
+                            ??
+                            ""
                         );
 
-                        exit;
 
-
-                    case "student":
-
-                        header(
-                            "Location: student/dashboard.php"
+                    $_SESSION[
+                        "last_name"
+                    ] =
+                        (string)
+                        (
+                            $user["last_name"]
+                            ??
+                            ""
                         );
 
-                        exit;
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | REDIRECT BY ROLE
+                    |--------------------------------------------------------------------------
+                    */
+
+                    switch (
+                        $role
+                    ) {
+
+                        case "admin":
+
+                            header(
+                                "Location: admin/dashboard.php"
+                            );
+
+                            exit;
 
 
-                    default:
+                        case "teacher":
 
-                        session_destroy();
+                            header(
+                                "Location: teacher/dashboard.php"
+                            );
 
-                        $error =
-                            "This account has an invalid role.";
+                            exit;
+
+
+                        case "student":
+
+                            header(
+                                "Location: student/dashboard.php"
+                            );
+
+                            exit;
+
+
+                        default:
+
+                            /*
+                            |--------------------------------------------------------------------------
+                            | UNKNOWN ROLE
+                            |--------------------------------------------------------------------------
+                            */
+
+                            $error =
+                                "Your account role is not recognised by the HIBS system.";
+
+                            break;
+                    }
                 }
             }
+
 
         } catch (
             Throwable $e
@@ -299,6 +443,40 @@ HIBS Reports | Login
     box-sizing: border-box;
 }
 
+
+:root {
+
+    --navy: #263238;
+
+    --navy-light: #37474f;
+
+    --slate: #607d8b;
+
+    --background: #f1f3f2;
+
+    --white: #ffffff;
+
+    --border: #d5d9d7;
+
+    --text: #25343b;
+
+    --muted: #718087;
+
+    --error-bg: #fff0f0;
+
+    --error-border: #e7c5c5;
+
+    --error-text: #8b4b4b;
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| BODY
+|--------------------------------------------------------------------------
+*/
+
 body {
 
     margin: 0;
@@ -311,236 +489,336 @@ body {
 
     justify-content: center;
 
+    padding: 30px 15px;
+
     background:
-        #eef0ee;
+        var(--background);
+
+    color:
+        var(--text);
 
     font-family:
         "Segoe UI",
         Arial,
         sans-serif;
 
-    color:
-        #263238;
-
 }
 
-.login {
 
-    width:
-        420px;
+/*
+|--------------------------------------------------------------------------
+| LOGIN CARD
+|--------------------------------------------------------------------------
+*/
 
-    max-width:
-        calc(100% - 30px);
+.login-card {
+
+    width: 100%;
+
+    max-width: 420px;
 
     background:
-        white;
+        var(--white);
 
     border:
         1px solid
-        #dfe2df;
-
-    box-shadow:
-        0 12px 40px
-        rgba(0,0,0,.06);
+        var(--border);
 
 }
 
-.header {
+
+/*
+|--------------------------------------------------------------------------
+| HEADER
+|--------------------------------------------------------------------------
+*/
+
+.login-header {
 
     padding:
-        30px;
+        32px 30px 27px;
 
-    text-align:
-        center;
+    text-align: center;
 
     border-bottom:
         1px solid
-        #e6e8e6;
+        #e3e6e4;
 
 }
 
-.logo {
 
-    font-size:
-        22px;
+.school-name {
 
-    font-weight:
-        700;
-
-    letter-spacing:
-        1.5px;
-
-}
-
-.school {
-
-    margin-top:
-        7px;
+    margin: 0;
 
     color:
-        #7a878c;
+        var(--navy);
 
-    font-size:
-        10px;
+    font-size: 23px;
 
-    line-height:
-        1.5;
+    font-weight: 700;
+
+    letter-spacing:
+        1.2px;
 
 }
 
-.body {
+
+.school-subtitle {
+
+    margin-top: 8px;
+
+    color:
+        var(--slate);
+
+    font-size: 9px;
+
+    line-height: 1.6;
+
+    letter-spacing:
+        .2px;
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| FORM AREA
+|--------------------------------------------------------------------------
+*/
+
+.login-body {
 
     padding:
-        30px;
+        32px 30px;
 
 }
 
-.title {
 
-    margin-bottom:
-        20px;
+.login-title {
 
-    font-size:
-        17px;
+    margin: 0 0 24px;
 
-    font-weight:
-        600;
+    font-size: 19px;
+
+    font-weight: 600;
 
 }
+
+
+/*
+|--------------------------------------------------------------------------
+| ERROR
+|--------------------------------------------------------------------------
+*/
+
+.error {
+
+    margin-bottom: 20px;
+
+    padding:
+        13px 14px;
+
+    color:
+        var(--error-text);
+
+    background:
+        var(--error-bg);
+
+    border:
+        1px solid
+        var(--error-border);
+
+    font-size: 11px;
+
+    line-height: 1.6;
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| FORM GROUP
+|--------------------------------------------------------------------------
+*/
+
+.form-group {
+
+    margin-bottom: 19px;
+
+}
+
 
 label {
 
-    display:
-        block;
+    display: block;
 
-    margin-bottom:
-        7px;
+    margin-bottom: 7px;
 
     color:
-        #657277;
+        #58686f;
 
-    font-size:
-        10px;
+    font-size: 10px;
 
-    font-weight:
-        600;
+    font-weight: 600;
 
 }
 
+
 input {
 
-    width:
-        100%;
+    width: 100%;
 
-    height:
-        44px;
+    height: 45px;
 
     padding:
         0 12px;
 
-    margin-bottom:
-        17px;
-
     border:
         1px solid
-        #ccd1cf;
+        #c8cfcc;
 
-    border-radius:
-        4px;
+    border-radius: 4px;
 
-    font-size:
-        13px;
+    background:
+        white;
 
-    outline:
-        none;
+    color:
+        var(--text);
+
+    font-family:
+        inherit;
+
+    font-size: 13px;
 
 }
+
 
 input:focus {
 
+    outline: none;
+
     border-color:
-        #607d8b;
+        var(--slate);
+
+    box-shadow:
+        0 0 0 2px
+        rgba(
+            96,
+            125,
+            139,
+            .08
+        );
 
 }
 
-button {
 
-    width:
-        100%;
+/*
+|--------------------------------------------------------------------------
+| LOGIN BUTTON
+|--------------------------------------------------------------------------
+*/
 
-    height:
-        45px;
+.login-button {
 
-    border:
-        0;
+    width: 100%;
+
+    height: 45px;
+
+    margin-top: 3px;
+
+    border: 0;
+
+    border-radius: 4px;
 
     background:
-        #263238;
+        var(--navy);
 
     color:
         white;
 
-    border-radius:
-        4px;
+    font-family:
+        inherit;
 
-    font-size:
-        12px;
+    font-size: 12px;
 
-    font-weight:
-        600;
+    font-weight: 700;
 
-    cursor:
-        pointer;
+    cursor: pointer;
 
 }
 
-button:hover {
+
+.login-button:hover {
 
     background:
-        #37474f;
+        var(--navy-light);
 
 }
 
-.error {
 
-    margin-bottom:
-        18px;
+/*
+|--------------------------------------------------------------------------
+| FOOTER
+|--------------------------------------------------------------------------
+*/
 
-    padding:
-        12px;
-
-    background:
-        #faeeee;
-
-    border:
-        1px solid
-        #e4cccc;
-
-    color:
-        #914f4f;
-
-    font-size:
-        10px;
-
-}
-
-.footer {
+.login-footer {
 
     padding:
-        16px;
+        17px 20px;
 
     border-top:
         1px solid
-        #e6e8e6;
+        #e3e6e4;
 
-    text-align:
-        center;
+    text-align: center;
 
     color:
-        #899397;
+        var(--slate);
 
-    font-size:
-        9px;
+    font-size: 9px;
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| MOBILE
+|--------------------------------------------------------------------------
+*/
+
+@media(max-width:500px) {
+
+    body {
+
+        padding:
+            15px;
+
+    }
+
+
+    .login-header {
+
+        padding:
+            27px 20px 23px;
+
+    }
+
+
+    .login-body {
+
+        padding:
+            27px 20px;
+
+    }
+
+
+    .school-name {
+
+        font-size: 21px;
+
+    }
 
 }
 
@@ -552,37 +830,40 @@ button:hover {
 <body>
 
 
-<div class="login">
+<div class="login-card">
 
 
-<div class="header">
+<!-- HEADER -->
 
-<div class="logo">
+<div class="login-header">
 
-HIBS REPORTS
+    <h1 class="school-name">
 
-</div>
+        HIBS REPORTS
 
-
-<div class="school">
-
-HILLTOP INTERNATIONAL<br>
-
-BRITISH SCHOOL
-
-</div>
-
-</div>
+    </h1>
 
 
-<div class="body">
+    <div class="school-subtitle">
 
+        HILLTOP INTERNATIONAL<br>
+        BRITISH SCHOOL
 
-<div class="title">
-
-Sign in to your account
+    </div>
 
 </div>
+
+
+<!-- BODY -->
+
+<div class="login-body">
+
+
+<h2 class="login-title">
+
+    Sign in to your account
+
+</h2>
 
 
 <?php if (
@@ -591,9 +872,9 @@ Sign in to your account
 
 <div class="error">
 
-<?= htmlspecialchars(
-    $error
-) ?>
+    <?= h(
+        $error
+    ) ?>
 
 </div>
 
@@ -602,16 +883,22 @@ Sign in to your account
 
 <form
     method="POST"
+    autocomplete="off"
 >
 
 
-<label>
+<div class="form-group">
+
+<label for="username">
+
     Username
+
 </label>
 
 
 <input
     type="text"
+    id="username"
     name="username"
     autocomplete="username"
     required
@@ -619,23 +906,37 @@ Sign in to your account
 >
 
 
-<label>
+</div>
+
+
+<div class="form-group">
+
+<label for="password">
+
     Password
+
 </label>
 
 
 <input
     type="password"
+    id="password"
     name="password"
     autocomplete="current-password"
     required
 >
 
 
+</div>
+
+
 <button
     type="submit"
+    class="login-button"
 >
+
     Sign In
+
 </button>
 
 
@@ -645,9 +946,11 @@ Sign in to your account
 </div>
 
 
-<div class="footer">
+<!-- FOOTER -->
 
-HIBS Academic Reporting System
+<div class="login-footer">
+
+    HIBS Academic Reporting System
 
 </div>
 
