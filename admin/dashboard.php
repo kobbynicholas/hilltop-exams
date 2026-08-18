@@ -120,6 +120,32 @@ $recentStudents = $conn->query("
 
     <a href="settings.php">Settings</a>
 
+<a href="class_subjects.php">
+    Class Subjects
+</a>
+
+<a href="assessments.php">
+    Assessments
+</a>
+
+<a href="subject_assessments.php">
+    Assessment Setup
+</a>
+
+<a href="grades.php">
+    Grades
+</a>
+
+<a href="marks.php">
+    Marks
+</a>
+
+<a href="results.php">
+    Results
+</a>
+
+
+        
 </nav>
 
 </nav>
