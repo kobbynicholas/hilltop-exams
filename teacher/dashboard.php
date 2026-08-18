@@ -345,6 +345,7 @@ $classes = $stmt->fetchAll();
 </nav>
 
 
+    
 <main class="page">
 
     <div class="teacher-welcome">
