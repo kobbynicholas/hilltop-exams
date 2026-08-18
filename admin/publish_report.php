@@ -4,35 +4,29 @@ session_start();
 
 require_once "../config/db.php";
 
-
-/*
-|--------------------------------------------------------------------------
-| HIBS REPORTS
-| PUBLISH REPORT
-|--------------------------------------------------------------------------
-| Changes:
-|
-| Approved -> Published
-|
-| Only administrators can perform this action.
-| The action MUST be submitted using POST.
-|--------------------------------------------------------------------------
-*/
-
-
-/*
-|--------------------------------------------------------------------------
-| ERROR REPORTING
-|--------------------------------------------------------------------------
-*/
-
 ini_set("display_errors", "0");
 error_reporting(E_ALL);
 
 
 /*
 |--------------------------------------------------------------------------
-| ADMIN ACCESS
+| HELPER
+|--------------------------------------------------------------------------
+*/
+
+function h($value): string
+{
+    return htmlspecialchars(
+        (string)$value,
+        ENT_QUOTES,
+        "UTF-8"
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN SECURITY
 |--------------------------------------------------------------------------
 */
 
@@ -40,637 +34,757 @@ if (
     !isset($_SESSION["user_id"]) ||
     ($_SESSION["role"] ?? "") !== "admin"
 ) {
-
-    header(
-        "Location: ../login.php"
-    );
-
+    header("Location: ../login.php");
     exit;
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| REQUEST METHOD
+| REPORT ID
 |--------------------------------------------------------------------------
 */
 
-if (
-    $_SERVER["REQUEST_METHOD"] !== "POST"
-) {
-
-    http_response_code(405);
-
-    exit(
-        "Method Not Allowed"
-    );
-}
+$reportId = filter_input(
+    INPUT_GET,
+    "id",
+    FILTER_VALIDATE_INT
+);
 
 
-/*
-|--------------------------------------------------------------------------
-| CSRF PROTECTION
-|--------------------------------------------------------------------------
-*/
+if (!$reportId) {
 
-$sessionToken =
-    $_SESSION["csrf_token"]
-    ?? "";
-
-$postedToken =
-    $_POST["csrf_token"]
-    ?? "";
-
-
-if (
-    empty($sessionToken) ||
-    empty($postedToken) ||
-    !hash_equals(
-        $sessionToken,
-        $postedToken
-    )
-) {
-
-    $_SESSION["report_message"] =
-        "Security verification failed. Please try again.";
-
-    $_SESSION["report_message_type"] =
-        "error";
-
-    header(
-        "Location: report_cards.php"
-    );
-
+    header("Location: reports.php");
     exit;
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| INPUT
-|--------------------------------------------------------------------------
-*/
-
-$student_id = filter_input(
-    INPUT_POST,
-    "student_id",
-    FILTER_VALIDATE_INT
-);
-
-$class_id = filter_input(
-    INPUT_POST,
-    "class_id",
-    FILTER_VALIDATE_INT
-);
-
-$term_id = filter_input(
-    INPUT_POST,
-    "term_id",
-    FILTER_VALIDATE_INT
-);
-
-
-if (
-    !$student_id ||
-    !$class_id ||
-    !$term_id
-) {
-
-    $_SESSION["report_message"] =
-        "Invalid report information.";
-
-    $_SESSION["report_message_type"] =
-        "error";
-
-    header(
-        "Location: report_cards.php"
-    );
-
-    exit;
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| TRANSACTION
+| LOAD REPORT
 |--------------------------------------------------------------------------
 */
 
 try {
 
-    $conn->beginTransaction();
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY STUDENT
-    |--------------------------------------------------------------------------
-    */
-
     $stmt = $conn->prepare("
         SELECT
-            id,
-            student_id,
-            first_name,
-            middle_name,
-            last_name,
-            class_id
 
-        FROM students
+            r.id,
+            r.report_status,
 
-        WHERE
-            id = ?
-            AND class_id = ?
+            s.first_name,
+            s.middle_name,
+            s.last_name,
+
+            s.student_id AS student_number,
+
+            c.class_name,
+
+            t.term_name,
+
+            ay.academic_year
+
+        FROM report_card_records r
+
+        INNER JOIN students s
+            ON s.id = r.student_id
+
+        INNER JOIN classes c
+            ON c.id = r.class_id
+
+        INNER JOIN terms t
+            ON t.id = r.term_id
+
+        INNER JOIN academic_years ay
+            ON ay.id = t.academic_year_id
+
+        WHERE r.id = ?
 
         LIMIT 1
     ");
 
     $stmt->execute([
-        $student_id,
-        $class_id
+        $reportId
     ]);
 
-    $student =
-        $stmt->fetch(
-            PDO::FETCH_ASSOC
-        );
+    $report = $stmt->fetch(
+        PDO::FETCH_ASSOC
+    );
 
-
-    if (!$student) {
-
-        throw new Exception(
-            "Student was not found in the selected class."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY TERM
-    |--------------------------------------------------------------------------
-    */
-
-    $stmt = $conn->prepare("
-        SELECT
-            id,
-            term_name,
-            academic_year_id
-
-        FROM terms
-
-        WHERE id = ?
-
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $term_id
-    ]);
-
-    $term =
-        $stmt->fetch(
-            PDO::FETCH_ASSOC
-        );
-
-
-    if (!$term) {
-
-        throw new Exception(
-            "Selected academic term was not found."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | LOAD REPORT
-    |--------------------------------------------------------------------------
-    */
-
-    $stmt = $conn->prepare("
-        SELECT
-
-            id,
-            student_id,
-            class_id,
-            term_id,
-
-            report_status,
-
-            approved_at,
-            approved_by,
-
-            published_at,
-            published_by
-
-        FROM report_card_records
-
-        WHERE
-
-            student_id = ?
-
-            AND class_id = ?
-
-            AND term_id = ?
-
-        LIMIT 1
-
-        FOR UPDATE
-    ");
-
-    $stmt->execute([
-        $student_id,
-        $class_id,
-        $term_id
-    ]);
-
-    $report =
-        $stmt->fetch(
-            PDO::FETCH_ASSOC
-        );
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | REPORT MUST EXIST
-    |--------------------------------------------------------------------------
-    */
 
     if (!$report) {
 
-        throw new Exception(
-            "The report does not exist."
-        );
+        header("Location: reports.php");
+        exit;
     }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | STATUS VALIDATION
-    |--------------------------------------------------------------------------
-    */
-
-    $currentStatus =
-        $report["report_status"]
-        ?? "Draft";
-
-
-    if (
-        $currentStatus === "Published"
-    ) {
-
-        throw new Exception(
-            "This report has already been published."
-        );
-    }
-
-
-    if (
-        $currentStatus !== "Approved"
-    ) {
-
-        throw new Exception(
-            "Only an approved report can be published."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY APPROVAL
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        empty(
-            $report["approved_at"]
-        )
-    ) {
-
-        throw new Exception(
-            "The report does not have a valid approval record."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY REPORT DETAILS
-    |--------------------------------------------------------------------------
-    */
-
-    $stmt = $conn->prepare("
-        SELECT
-
-            days_opened,
-            days_present,
-            days_absent,
-
-            conduct,
-            promotion_status,
-
-            teacher_comment,
-            headteacher_comment
-
-        FROM report_card_records
-
-        WHERE id = ?
-
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $report["id"]
-    ]);
-
-    $details =
-        $stmt->fetch(
-            PDO::FETCH_ASSOC
-        );
-
-
-    if (!$details) {
-
-        throw new Exception(
-            "Report details could not be verified."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | ATTENDANCE CHECK
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        $details["days_opened"] === null
-        ||
-        $details["days_present"] === null
-        ||
-        $details["days_absent"] === null
-    ) {
-
-        throw new Exception(
-            "Attendance information is incomplete."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | CONDUCT CHECK
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        trim(
-            (string)(
-                $details["conduct"]
-                ?? ""
-            )
-        ) === ""
-    ) {
-
-        throw new Exception(
-            "Conduct information is incomplete."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | PROMOTION CHECK
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        trim(
-            (string)(
-                $details["promotion_status"]
-                ?? ""
-            )
-        ) === ""
-    ) {
-
-        throw new Exception(
-            "Promotion status is incomplete."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | RESULTS CHECK
-    |--------------------------------------------------------------------------
-    */
-
-    $stmt = $conn->prepare("
-        SELECT
-            COUNT(*) AS result_count
-
-        FROM student_results
-
-        WHERE
-            student_id = ?
-            AND class_id = ?
-            AND term_id = ?
-    ");
-
-    $stmt->execute([
-        $student_id,
-        $class_id,
-        $term_id
-    ]);
-
-    $resultCheck =
-        $stmt->fetch(
-            PDO::FETCH_ASSOC
-        );
-
-
-    if (
-        (int)(
-            $resultCheck["result_count"]
-            ?? 0
-        ) <= 0
-    ) {
-
-        throw new Exception(
-            "Academic results are missing. The report cannot be published."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | PUBLISH REPORT
-    |--------------------------------------------------------------------------
-    */
-
-    $stmt = $conn->prepare("
-        UPDATE report_card_records
-
-        SET
-
-            report_status = 'Published',
-
-            published_at = NOW(),
-
-            published_by = ?
-
-        WHERE
-
-            id = ?
-
-            AND student_id = ?
-
-            AND class_id = ?
-
-            AND term_id = ?
-
-            AND report_status = 'Approved'
-    ");
-
-    $stmt->execute([
-
-        $_SESSION["user_id"],
-
-        $report["id"],
-
-        $student_id,
-
-        $class_id,
-
-        $term_id
-
-    ]);
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY PUBLICATION
-    |--------------------------------------------------------------------------
-    */
-
-    $stmt = $conn->prepare("
-        SELECT
-
-            report_status,
-            published_at,
-            published_by
-
-        FROM report_card_records
-
-        WHERE id = ?
-
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $report["id"]
-    ]);
-
-    $published =
-        $stmt->fetch(
-            PDO::FETCH_ASSOC
-        );
-
-
-    if (
-        !$published ||
-        $published["report_status"] !== "Published"
-    ) {
-
-        throw new Exception(
-            "The report could not be published."
-        );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | COMMIT
-    |--------------------------------------------------------------------------
-    */
-
-    $conn->commit();
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | SUCCESS
-    |--------------------------------------------------------------------------
-    */
-
-    $_SESSION["report_message"] =
-        "Report published successfully.";
-
-    $_SESSION["report_message_type"] =
-        "success";
-
-
-    header(
-        "Location: report_cards.php?class_id="
-        . urlencode(
-            (string)$class_id
-        )
-        . "&term_id="
-        . urlencode(
-            (string)$term_id
-        )
-        . "&published=1"
-    );
-
-    exit;
 
 
 } catch (Throwable $e) {
 
+    die(
+        "Unable to load the report."
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| STUDENT NAME
+|--------------------------------------------------------------------------
+*/
+
+$studentName = trim(
+    implode(
+        " ",
+        array_filter([
+            $report["first_name"] ?? "",
+            $report["middle_name"] ?? "",
+            $report["last_name"] ?? ""
+        ])
+    )
+);
+
+
+/*
+|--------------------------------------------------------------------------
+| PUBLISH
+|--------------------------------------------------------------------------
+*/
+
+if (
+    $_SERVER["REQUEST_METHOD"] === "POST"
+) {
+
 
     /*
     |--------------------------------------------------------------------------
-    | ROLLBACK
+    | ONLY APPROVED REPORTS CAN BE PUBLISHED
     |--------------------------------------------------------------------------
     */
 
     if (
-        $conn->inTransaction()
+        $report["report_status"] !== "Approved"
     ) {
 
-        $conn->rollBack();
+        $error =
+            "This report cannot be published because its current status is "
+            . $report["report_status"]
+            . ".";
+
+    } else {
+
+        try {
+
+            $conn->beginTransaction();
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | PUBLISH
+            |--------------------------------------------------------------------------
+            */
+
+            $stmt = $conn->prepare("
+                UPDATE report_card_records
+
+                SET
+
+                    report_status = 'Published',
+
+                    published_at = NOW(),
+
+                    updated_at = NOW()
+
+                WHERE
+
+                    id = ?
+
+                    AND report_status = 'Approved'
+            ");
+
+
+            $stmt->execute([
+                $reportId
+            ]);
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | VERIFY
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                $stmt->rowCount() !== 1
+            ) {
+
+                throw new Exception(
+                    "The report could not be published."
+                );
+            }
+
+
+            $conn->commit();
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | RETURN
+            |--------------------------------------------------------------------------
+            */
+
+            header(
+                "Location: reports.php?published=1"
+            );
+
+            exit;
+
+
+        } catch (Throwable $e) {
+
+            if (
+                $conn->inTransaction()
+            ) {
+
+                $conn->rollBack();
+            }
+
+
+            $error =
+                "Publication failed. "
+                . $e->getMessage();
+        }
+    }
+}
+
+?>
+
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>
+    HIBS Reports | Publish Report
+</title>
+
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+
+    margin: 0;
+
+    background: #f5f4f0;
+
+    color: #263238;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+}
+
+
+.container {
+
+    width: 100%;
+
+    max-width: 720px;
+
+    margin: 70px auto;
+
+    padding: 20px;
+}
+
+
+.card {
+
+    background: #ffffff;
+
+    border:
+        1px solid
+        #deddd8;
+}
+
+
+.header {
+
+    padding: 25px;
+
+    border-bottom:
+        1px solid
+        #e7e5e1;
+}
+
+
+.brand {
+
+    color: #263238;
+
+    font-size: 17px;
+
+    font-weight: 700;
+
+    letter-spacing: 1px;
+}
+
+
+.subtitle {
+
+    margin-top: 6px;
+
+    color: #899398;
+
+    font-size: 9px;
+
+    text-transform: uppercase;
+
+    letter-spacing: 1px;
+}
+
+
+.body {
+
+    padding: 25px;
+}
+
+
+.title {
+
+    margin: 0;
+
+    color: #37474f;
+
+    font-size: 22px;
+
+    font-weight: 600;
+}
+
+
+.description {
+
+    margin-top: 8px;
+
+    color: #7a858a;
+
+    font-size: 10px;
+
+    line-height: 1.7;
+}
+
+
+.student {
+
+    margin-top: 22px;
+
+    padding: 18px;
+
+    background: #f7f7f4;
+
+    border:
+        1px solid
+        #e5e4df;
+}
+
+
+.student-name {
+
+    color: #37474f;
+
+    font-size: 16px;
+
+    font-weight: 600;
+}
+
+
+.student-details {
+
+    margin-top: 8px;
+
+    color: #7a858a;
+
+    font-size: 9px;
+
+    line-height: 1.8;
+}
+
+
+.status {
+
+    display: inline-block;
+
+    margin-top: 14px;
+
+    padding:
+        7px 10px;
+
+    background: #e9eef2;
+
+    color: #506675;
+
+    font-size: 8px;
+
+    font-weight: bold;
+
+    text-transform: uppercase;
+}
+
+
+.warning {
+
+    margin-top: 20px;
+
+    padding: 15px;
+
+    background: #eef2f3;
+
+    border-left:
+        3px solid
+        #607d8b;
+
+    color: #586a71;
+
+    font-size: 9px;
+
+    line-height: 1.7;
+}
+
+
+.error {
+
+    margin-bottom: 18px;
+
+    padding: 13px;
+
+    background: #fbf1f1;
+
+    border:
+        1px solid
+        #e1c8c8;
+
+    color: #8b4b4b;
+
+    font-size: 9px;
+}
+
+
+.actions {
+
+    margin-top: 25px;
+
+    display: flex;
+
+    justify-content: flex-end;
+
+    gap: 8px;
+}
+
+
+.btn {
+
+    display: inline-block;
+
+    padding:
+        11px 15px;
+
+    border: 0;
+
+    border-radius: 3px;
+
+    font-family: inherit;
+
+    font-size: 9px;
+
+    font-weight: bold;
+
+    text-decoration: none;
+
+    cursor: pointer;
+}
+
+
+.cancel {
+
+    background: #ffffff;
+
+    color: #68757a;
+
+    border:
+        1px solid
+        #d4d3ce;
+}
+
+
+.publish {
+
+    background: #657d70;
+
+    color: #ffffff;
+}
+
+
+.publish:hover {
+
+    background: #50665a;
+}
+
+
+@media(max-width:600px) {
+
+    .container {
+
+        margin: 25px auto;
+
+        padding: 12px;
     }
 
+    .actions {
 
-    /*
-    |--------------------------------------------------------------------------
-    | ERROR MESSAGE
-    |--------------------------------------------------------------------------
-    */
+        flex-direction: column;
+    }
 
-    $_SESSION["report_message"] =
-        $e->getMessage();
+    .btn {
 
-    $_SESSION["report_message_type"] =
-        "error";
+        width: 100%;
 
+        text-align: center;
+    }
 
-    /*
-    |--------------------------------------------------------------------------
-    | REDIRECT
-    |--------------------------------------------------------------------------
-    */
-
-    header(
-        "Location: report_cards.php?class_id="
-        . urlencode(
-            (string)$class_id
-        )
-        . "&term_id="
-        . urlencode(
-            (string)$term_id
-        )
-    );
-
-    exit;
 }
+
+</style>
+
+</head>
+
+
+<body>
+
+
+<div class="container">
+
+
+    <div class="card">
+
+
+        <div class="header">
+
+            <div class="brand">
+                HIBS REPORTS
+            </div>
+
+            <div class="subtitle">
+                Hilltop International British School
+            </div>
+
+        </div>
+
+
+        <div class="body">
+
+
+            <?php if (
+                isset($error)
+            ): ?>
+
+                <div class="error">
+
+                    <?= h($error) ?>
+
+                </div>
+
+            <?php endif; ?>
+
+
+            <h1 class="title">
+                Publish Academic Report
+            </h1>
+
+
+            <div class="description">
+
+                Publishing this report makes it an official
+                HIBS academic record and allows the student
+                to access it through the student portal.
+
+            </div>
+
+
+            <div class="student">
+
+
+                <div class="student-name">
+
+                    <?= h(
+                        $studentName
+                    ) ?>
+
+                </div>
+
+
+                <div class="student-details">
+
+                    Student ID:
+                    <strong>
+                        <?= h(
+                            $report["student_number"]
+                        ) ?>
+                    </strong>
+
+                    <br>
+
+                    Class:
+                    <strong>
+                        <?= h(
+                            $report["class_name"]
+                        ) ?>
+                    </strong>
+
+                    <br>
+
+                    Academic Year:
+                    <strong>
+                        <?= h(
+                            $report["academic_year"]
+                        ) ?>
+                    </strong>
+
+                    <br>
+
+                    Term:
+                    <strong>
+                        <?= h(
+                            $report["term_name"]
+                        ) ?>
+                    </strong>
+
+                </div>
+
+
+                <span class="status">
+
+                    <?= h(
+                        $report["report_status"]
+                    ) ?>
+
+                </span>
+
+
+            </div>
+
+
+            <?php if (
+                $report["report_status"] === "Approved"
+            ): ?>
+
+
+                <div class="warning">
+
+                    This report has already passed the
+                    approval stage.
+
+                    <br><br>
+
+                    Once published, the report will become
+                    an official student record and will be
+                    available through the student portal.
+
+                    <br><br>
+
+                    <strong>
+                        Please verify the report one final
+                        time before publishing.
+                    </strong>
+
+                </div>
+
+
+                <form
+                    method="POST"
+                    class="actions"
+                >
+
+                    <a
+                        href="reports.php"
+                        class="btn cancel"
+                    >
+                        Cancel
+                    </a>
+
+
+                    <button
+                        type="submit"
+                        class="btn publish"
+                        onclick="
+                            return confirm(
+                                'Publish this official academic report?'
+                            );
+                        "
+                    >
+                        Publish Report
+                    </button>
+
+                </form>
+
+
+            <?php else: ?>
+
+
+                <div class="warning">
+
+                    This report is currently
+                    <strong>
+                        <?= h(
+                            $report["report_status"]
+                        ) ?>
+                    </strong>.
+
+                    Only reports with an
+                    <strong>
+                        Approved
+                    </strong>
+                    status can be published.
+
+                </div>
+
+
+                <div class="actions">
+
+                    <a
+                        href="reports.php"
+                        class="btn cancel"
+                    >
+                        Return to Reports
+                    </a>
+
+                </div>
+
+
+            <?php endif; ?>
+
+
+        </div>
+
+
+    </div>
+
+
+</div>
+
+
+</body>
+
+</html>
