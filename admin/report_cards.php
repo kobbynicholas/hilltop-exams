@@ -15,6 +15,41 @@ if (
 $message = "";
 $error = "";
 
+
+
+
+<?php if (
+    ($report["report_status"] ?? "Draft")
+    === "Draft"
+): ?>
+
+    <span class="status-badge draft">
+        Draft
+    </span>
+
+<?php elseif (
+    $report["report_status"] === "Approved"
+): ?>
+
+    <span class="status-badge approved">
+        Approved
+    </span>
+
+<?php else: ?>
+
+    <span class="status-badge published">
+        Published
+    </span>
+
+<?php endif; ?>
+
+
+
+
+
+
+
+
 /*
 |--------------------------------------------------------------------------
 | GET CLASSES
