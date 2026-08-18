@@ -334,7 +334,7 @@ $classes = $stmt->fetchAll();
         My Subjects
     </a>
 
-     <a href="maerks.php">
+     <a href="marks.php">
         Marks
     </a>
 
