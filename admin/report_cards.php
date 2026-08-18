@@ -386,13 +386,12 @@ if ($class_id > 0) {
 
                                 <div class="student-actions">
 
-                                    <a
-                                        href="../student_report.php?student_id=<?= $student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
-                                        class="btn btn-primary"
-                                        target="_blank"
-                                    >
-                                        View Report
-                                    </a>
+                                   <a
+    href="report_details.php?student_id=<?= $student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>"
+    class="btn btn-light"
+>
+    Edit Details
+</a>
 
                                     <a
                                         href="../student_report.php?student_id=<?= $student["id"] ?>&class_id=<?= $class_id ?>&term_id=<?= $term_id ?>&print=1"
