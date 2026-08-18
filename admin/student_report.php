@@ -5,6 +5,11 @@ session_start();
 require_once "config/db.php";
 
 
+
+
+
+
+
 /*
 |--------------------------------------------------------------------------
 | ADMIN / TEACHER ACCESS
@@ -43,6 +48,37 @@ if (
 ) {
     die("Invalid report information.");
 }
+
+
+$stmt = $conn->query("
+    SELECT *
+    FROM school_settings
+    ORDER BY id
+    LIMIT 1
+");
+
+$school = $stmt->fetch();
+
+
+
+<?php if (!empty($school["logo"])): ?>
+
+    <img
+        src="uploads/logo/<?= htmlspecialchars(
+            $school["logo"]
+        ) ?>"
+        class="school-logo-image"
+        alt="School Logo"
+    >
+
+<?php else: ?>
+
+    <div class="school-logo">
+        H
+    </div>
+
+<?php endif; ?>
+
 
 
 /*
@@ -648,6 +684,18 @@ body {
         margin: 10mm;
     }
 
+
+.school-logo-image {
+    width: 90px;
+    height: 90px;
+    object-fit: contain;
+    margin: 0 auto 12px;
+    display: block;
+}
+
+
+
+    
 }
 
 </style>
