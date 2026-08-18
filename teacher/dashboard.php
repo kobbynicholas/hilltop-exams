@@ -334,6 +334,10 @@ $classes = $stmt->fetchAll();
         My Subjects
     </a>
 
+     <a href="maerks.php">
+        Marks
+    </a>
+
     <a href="profile.php">
         My Profile
     </a>
