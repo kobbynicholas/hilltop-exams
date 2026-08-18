@@ -165,6 +165,36 @@ if ($class_id > 0) {
     flex-wrap: wrap;
 }
 
+
+.status-badge {
+    display: inline-block;
+    padding: 5px 10px;
+    font-family: Arial, sans-serif;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+
+.status-badge.draft {
+    background: #eee;
+    color: #555;
+}
+
+.status-badge.approved {
+    background: #efe6cf;
+    color: #755c22;
+}
+
+.status-badge.published {
+    background: #e6eee8;
+    color: #315d3d;
+}
+
+
+
+
+
+    
 </style>
 
 </head>
