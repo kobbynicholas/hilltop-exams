@@ -1657,14 +1657,14 @@ body {
         <?php endif; ?>
 
 
-        <button
-            type="button"
-            class="toolbar-btn print-btn"
-            onclick="window.print();"
-        >
-            Print Report
-        </button>
-
+        <a
+    href="student_report_print.php?id=<?= (int)$report["id"] ?>"
+    class="toolbar-btn print-btn"
+    target="_blank"
+    rel="noopener"
+>
+    Print / Save PDF
+</a>
 
     </div>
 
