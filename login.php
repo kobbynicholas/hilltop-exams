@@ -13,7 +13,7 @@ error_reporting(E_ALL);
 /*
 |--------------------------------------------------------------------------
 | HIBS REPORTS
-| MAIN LOGIN SYSTEM
+| LOGIN SYSTEM
 |--------------------------------------------------------------------------
 */
 
@@ -39,32 +39,211 @@ function h($value): string
 
 /*
 |--------------------------------------------------------------------------
-| CHECK TABLE
+| FIND USER ROLE
+|--------------------------------------------------------------------------
+|
+| The system first uses users.role.
+|
+| If role is missing, it checks:
+|
+| students.user_id
+| teachers.user_id
+|
+|--------------------------------------------------------------------------
+*/
+
+function determineUserRole(
+    PDO $conn,
+    int $userId,
+    string $existingRole
+): string {
+
+    $existingRole =
+        strtolower(
+            trim(
+                $existingRole
+            )
+        );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Existing valid role
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        in_array(
+            $existingRole,
+            [
+                "admin",
+                "teacher",
+                "student"
+            ],
+            true
+        )
+    ) {
+
+        return $existingRole;
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Check STUDENTS
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+
+        $stmt =
+            $conn->prepare("
+                SELECT id
+
+                FROM students
+
+                WHERE user_id = ?
+
+                LIMIT 1
+            ");
+
+
+        $stmt->execute([
+            $userId
+        ]);
+
+
+        if (
+            $stmt->fetchColumn()
+        ) {
+
+            return "student";
+        }
+
+    } catch (
+        Throwable $e
+    ) {
+
+        // Ignore and continue.
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Check TEACHERS
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+
+        $stmt =
+            $conn->prepare("
+                SELECT id
+
+                FROM teachers
+
+                WHERE user_id = ?
+
+                LIMIT 1
+            ");
+
+
+        $stmt->execute([
+            $userId
+        ]);
+
+
+        if (
+            $stmt->fetchColumn()
+        ) {
+
+            return "teacher";
+        }
+
+    } catch (
+        Throwable $e
+    ) {
+
+        // Ignore and continue.
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | No role found
+    |--------------------------------------------------------------------------
+    */
+
+    return "";
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE ROLE
+|--------------------------------------------------------------------------
+*/
+
+function updateUserRole(
+    PDO $conn,
+    int $userId,
+    string $role
+): void {
+
+    try {
+
+        $stmt =
+            $conn->prepare("
+                UPDATE users
+
+                SET role = ?
+
+                WHERE id = ?
+            ");
+
+
+        $stmt->execute([
+            $role,
+            $userId
+        ]);
+
+    } catch (
+        Throwable $e
+    ) {
+
+        // Do not stop login if role update fails.
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| CHECK USERS TABLE
 |--------------------------------------------------------------------------
 */
 
 try {
 
-    $tableCheck = $conn->query("
-        SELECT COUNT(*)
+    $stmt =
+        $conn->query("
+            SELECT COUNT(*)
 
-        FROM information_schema.tables
+            FROM information_schema.tables
 
-        WHERE table_schema = DATABASE()
+            WHERE table_schema = DATABASE()
 
-        AND table_name = 'users'
-    ");
+            AND table_name = 'users'
+        ");
 
 
     if (
-        (int)$tableCheck->fetchColumn() === 0
+        (int)$stmt->fetchColumn() === 0
     ) {
 
         throw new Exception(
             "The users table does not exist."
         );
     }
-
 
 } catch (
     Throwable $e
@@ -79,7 +258,7 @@ try {
 
 /*
 |--------------------------------------------------------------------------
-| LOGIN
+| PROCESS LOGIN
 |--------------------------------------------------------------------------
 */
 
@@ -93,7 +272,9 @@ if (
         trim(
             (string)
             (
-                $_POST["username"]
+                $_POST[
+                    "username"
+                ]
                 ?? ""
             )
         );
@@ -102,10 +283,18 @@ if (
     $password =
         (string)
         (
-            $_POST["password"]
+            $_POST[
+                "password"
+            ]
             ?? ""
         );
 
+
+    /*
+    |--------------------------------------------------------------------------
+    | BASIC VALIDATION
+    |--------------------------------------------------------------------------
+    */
 
     if (
         $username === ""
@@ -122,12 +311,10 @@ if (
 
             /*
             |--------------------------------------------------------------------------
-            | GET ACTUAL USERS COLUMNS
+            | GET USER
             |--------------------------------------------------------------------------
             |
-            | We deliberately use SELECT *
-            | so this login system does not assume
-            | first_name, last_name, email, etc.
+            | SELECT * deliberately.
             |
             */
 
@@ -171,7 +358,7 @@ if (
 
                 /*
                 |--------------------------------------------------------------------------
-                | PASSWORD COLUMN
+                | PASSWORD
                 |--------------------------------------------------------------------------
                 */
 
@@ -180,15 +367,15 @@ if (
                     ??
                     $user["password_hash"]
                     ??
-                    null;
+                    "";
 
 
                 if (
-                    !$storedPassword
+                    $storedPassword === ""
                 ) {
 
                     throw new Exception(
-                        "The users table does not contain a valid password field."
+                        "This account does not contain a valid password."
                     );
                 }
 
@@ -214,7 +401,7 @@ if (
 
                     /*
                     |--------------------------------------------------------------------------
-                    | CHECK ACCOUNT STATUS
+                    | STATUS
                     |--------------------------------------------------------------------------
                     */
 
@@ -229,7 +416,13 @@ if (
                             strtolower(
                                 trim(
                                     (string)
-                                    $user["status"]
+                                    (
+                                        $user[
+                                            "status"
+                                        ]
+                                        ??
+                                        ""
+                                    )
                                 )
                             );
 
@@ -256,36 +449,82 @@ if (
 
                     /*
                     |--------------------------------------------------------------------------
-                    | ROLE
+                    | DETERMINE ROLE
                     |--------------------------------------------------------------------------
                     */
 
-                    $role =
-                        strtolower(
-                            trim(
-                                (string)
-                                (
-                                    $user["role"]
-                                    ??
-                                    ""
-                                )
-                            )
+                    $userId =
+                        (int)
+                        (
+                            $user[
+                                "id"
+                            ]
+                            ?? 0
                         );
 
+
+                    $existingRole =
+                        (string)
+                        (
+                            $user[
+                                "role"
+                            ]
+                            ??
+                            ""
+                        );
+
+
+                    $role =
+                        determineUserRole(
+                            $conn,
+                            $userId,
+                            $existingRole
+                        );
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | ROLE NOT FOUND
+                    |--------------------------------------------------------------------------
+                    */
 
                     if (
                         $role === ""
                     ) {
 
                         throw new Exception(
-                            "This account does not have a valid user role."
+                            "This account is not linked to a student, teacher, or administrator role."
                         );
                     }
 
 
                     /*
                     |--------------------------------------------------------------------------
-                    | REGENERATE SESSION ID
+                    | AUTOMATICALLY REPAIR ROLE
+                    |--------------------------------------------------------------------------
+                    */
+
+                    if (
+                        strtolower(
+                            trim(
+                                $existingRole
+                            )
+                        )
+                        !==
+                        $role
+                    ) {
+
+                        updateUserRole(
+                            $conn,
+                            $userId,
+                            $role
+                        );
+                    }
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | SESSION SECURITY
                     |--------------------------------------------------------------------------
                     */
 
@@ -296,22 +535,26 @@ if (
 
                     /*
                     |--------------------------------------------------------------------------
-                    | STORE SESSION
+                    | SESSION DATA
                     |--------------------------------------------------------------------------
                     */
 
                     $_SESSION[
                         "user_id"
                     ] =
-                        (int)
-                        $user["id"];
+                        $userId;
 
 
                     $_SESSION[
                         "username"
                     ] =
                         (string)
-                        $user["username"];
+                        (
+                            $user[
+                                "username"
+                            ]
+                            ?? ""
+                        );
 
 
                     $_SESSION[
@@ -322,11 +565,8 @@ if (
 
                     /*
                     |--------------------------------------------------------------------------
-                    | OPTIONAL USER INFORMATION
+                    | OPTIONAL USER DATA
                     |--------------------------------------------------------------------------
-                    |
-                    | We only store these if they actually exist.
-                    |
                     */
 
                     $_SESSION[
@@ -334,7 +574,9 @@ if (
                     ] =
                         (string)
                         (
-                            $user["first_name"]
+                            $user[
+                                "first_name"
+                            ]
                             ??
                             ""
                         );
@@ -345,7 +587,9 @@ if (
                     ] =
                         (string)
                         (
-                            $user["last_name"]
+                            $user[
+                                "last_name"
+                            ]
                             ??
                             ""
                         );
@@ -353,54 +597,49 @@ if (
 
                     /*
                     |--------------------------------------------------------------------------
-                    | REDIRECT BY ROLE
+                    | REDIRECT
                     |--------------------------------------------------------------------------
                     */
 
-                    switch (
-                        $role
+                    if (
+                        $role === "admin"
                     ) {
 
-                        case "admin":
+                        header(
+                            "Location: admin/dashboard.php"
+                        );
 
-                            header(
-                                "Location: admin/dashboard.php"
-                            );
-
-                            exit;
-
-
-                        case "teacher":
-
-                            header(
-                                "Location: teacher/dashboard.php"
-                            );
-
-                            exit;
-
-
-                        case "student":
-
-                            header(
-                                "Location: student/dashboard.php"
-                            );
-
-                            exit;
-
-
-                        default:
-
-                            /*
-                            |--------------------------------------------------------------------------
-                            | UNKNOWN ROLE
-                            |--------------------------------------------------------------------------
-                            */
-
-                            $error =
-                                "Your account role is not recognised by the HIBS system.";
-
-                            break;
+                        exit;
                     }
+
+
+                    if (
+                        $role === "teacher"
+                    ) {
+
+                        header(
+                            "Location: teacher/dashboard.php"
+                        );
+
+                        exit;
+                    }
+
+
+                    if (
+                        $role === "student"
+                    ) {
+
+                        header(
+                            "Location: student/dashboard.php"
+                        );
+
+                        exit;
+                    }
+
+
+                    throw new Exception(
+                        "The account role could not be processed."
+                    );
                 }
             }
 
@@ -410,8 +649,6 @@ if (
         ) {
 
             $error =
-                "Login system error: "
-                .
                 $e->getMessage();
         }
     }
@@ -471,12 +708,6 @@ HIBS Reports | Login
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| BODY
-|--------------------------------------------------------------------------
-*/
-
 body {
 
     margin: 0;
@@ -505,12 +736,6 @@ body {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| LOGIN CARD
-|--------------------------------------------------------------------------
-*/
-
 .login-card {
 
     width: 100%;
@@ -526,12 +751,6 @@ body {
 
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| HEADER
-|--------------------------------------------------------------------------
-*/
 
 .login-header {
 
@@ -575,17 +794,8 @@ body {
 
     line-height: 1.6;
 
-    letter-spacing:
-        .2px;
-
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| FORM AREA
-|--------------------------------------------------------------------------
-*/
 
 .login-body {
 
@@ -597,7 +807,8 @@ body {
 
 .login-title {
 
-    margin: 0 0 24px;
+    margin:
+        0 0 24px;
 
     font-size: 19px;
 
@@ -605,12 +816,6 @@ body {
 
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| ERROR
-|--------------------------------------------------------------------------
-*/
 
 .error {
 
@@ -635,12 +840,6 @@ body {
 
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| FORM GROUP
-|--------------------------------------------------------------------------
-*/
 
 .form-group {
 
@@ -701,23 +900,8 @@ input:focus {
     border-color:
         var(--slate);
 
-    box-shadow:
-        0 0 0 2px
-        rgba(
-            96,
-            125,
-            139,
-            .08
-        );
-
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| LOGIN BUTTON
-|--------------------------------------------------------------------------
-*/
 
 .login-button {
 
@@ -757,12 +941,6 @@ input:focus {
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| FOOTER
-|--------------------------------------------------------------------------
-*/
-
 .login-footer {
 
     padding:
@@ -781,12 +959,6 @@ input:focus {
 
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| MOBILE
-|--------------------------------------------------------------------------
-*/
 
 @media(max-width:500px) {
 
@@ -833,8 +1005,6 @@ input:focus {
 <div class="login-card">
 
 
-<!-- HEADER -->
-
 <div class="login-header">
 
     <h1 class="school-name">
@@ -847,14 +1017,13 @@ input:focus {
     <div class="school-subtitle">
 
         HILLTOP INTERNATIONAL<br>
+
         BRITISH SCHOOL
 
     </div>
 
 </div>
 
-
-<!-- BODY -->
 
 <div class="login-body">
 
@@ -945,8 +1114,6 @@ input:focus {
 
 </div>
 
-
-<!-- FOOTER -->
 
 <div class="login-footer">
 
