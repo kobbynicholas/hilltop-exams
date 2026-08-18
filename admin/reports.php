@@ -2163,7 +2163,7 @@ tbody tr:hover {
                                         <!-- VIEW -->
 
                                         <a
-                                            href="../student_report.php?student_id=<?= (int)$report["student_id"] ?>&class_id=<?= (int)$report["class_id"] ?>&term_id=<?= (int)$report["term_id"] ?>&preview=1"
+                                            href="../student_report.php?id=<?= (int)$report["report_id"] ?>"
                                             class="action action-view"
                                             target="_blank"
                                             rel="noopener"
