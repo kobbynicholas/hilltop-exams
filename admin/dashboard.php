@@ -2515,7 +2515,7 @@ body {
 
 
 <a
-    href="account.php"
+    href="accounts.php"
 >
 
     <span class="nav-icon">
